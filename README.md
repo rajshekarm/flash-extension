@@ -1,4 +1,4 @@
-# Flash Chrome Extension
+# Flash Chrome Extension ⚡
 
 Chrome Extension for AI-powered job application assistance using Plasmo framework.
 
@@ -13,6 +13,35 @@ Flash Extension integrates with the [Atlas Flash Service](../atlas/app/services/
 - 📊 Show confidence scores for each answer
 - 👁️ Review and edit before submission
 - 🛡️ Ethical guardrails (no fake experience)
+
+## Quick Start
+
+### Installation
+
+```bash
+# Install dependencies
+pnpm install
+
+# Copy environment variables
+cp .env.example .env
+
+# Start development server
+pnpm dev
+```
+
+### Load in Chrome
+
+1. Open `chrome://extensions/`
+2. Enable "Developer mode"
+3. Click "Load unpacked"
+4. Select `build/chrome-mv3-dev/` directory
+
+### Prerequisites
+
+- Node.js 18.0 or higher
+- pnpm (recommended) or npm
+- Chrome browser
+- Atlas Flash backend running at `http://localhost:8000`
 
 ---
 
