@@ -243,6 +243,7 @@ async function initializeDefaultStorage(): Promise<void> {
   // Set default preferences
   await flashSyncStorage.set('preferences', {
     autoAnalyze: false,
+    autoOpenSidepanel: false,
     autoFill: false,
     minConfidence: 0.5,
     highlightFilled: true,
