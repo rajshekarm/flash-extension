@@ -59,7 +59,8 @@ export default function Popup() {
       const response = await chrome.tabs.sendMessage(tab.id, { type: 'ANALYZE_JOB' });
       
       if (response.success) {
-        alert('Job analyzed successfully! Open the side panel to view details.');
+        // Immediately open sidepanel instead of showing alert
+        chrome.sidePanel.open({ windowId: tab.windowId });
       } else {
         alert(`Failed to analyze job: ${response.error}`);
       }
@@ -72,7 +73,10 @@ export default function Popup() {
   }
 
   async function handleOpenSidePanel() {
-    await sendMessage({ type: 'OPEN_SIDEPANEL' });
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.windowId) {
+      chrome.sidePanel.open({ windowId: tab.windowId });
+    }
   }
 
   async function handleOpenOptions() {

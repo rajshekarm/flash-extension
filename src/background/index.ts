@@ -2,7 +2,7 @@
 // This is the brain of the extension that coordinates all operations
 
 import { flashStorage, flashSyncStorage } from '~lib/storage/chrome';
-import type { Message, MessageResponse, MessageType } from '~types';
+import type { Message, MessageResponse } from '~types';
 
 console.log('[Flash Background] Service worker started');
 
@@ -75,8 +75,15 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       // Optionally inject content script
       await injectContentScriptIfNeeded(tabId);
       
-      // Check preferences for auto-analyze
+      // Check preferences for auto-open sidepanel
       const prefs = await flashSyncStorage.get('preferences');
+      if (prefs?.autoOpenSidepanel) {
+        // Auto-open sidepanel on job board detection
+        chrome.sidePanel.open({ tabId });
+        console.log('[Flash Background] Sidepanel opened automatically');
+      }
+      
+      // Check preferences for auto-analyze
       if (prefs?.autoAnalyze) {
         // Auto-analyze could be triggered here
         console.log('[Flash Background] Auto-analyze is enabled');

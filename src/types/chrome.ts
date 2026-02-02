@@ -111,6 +111,7 @@ export interface APISettings {
 
 export interface UserPreferences {
   autoAnalyze: boolean;
+  autoOpenSidepanel: boolean;
   autoFill: boolean;
   minConfidence: number;
   highlightFilled: boolean;
