@@ -14,7 +14,7 @@ export class FlashStorage {
   async get<K extends keyof StorageData>(key: K): Promise<StorageData[K] | null> {
     try {
       const value = await this.storage.get(key);
-      return value ?? null;
+      return (value ?? null) as StorageData[K] | null;
     } catch (error) {
       console.error(`Error getting ${String(key)} from storage:`, error);
       return null;
@@ -78,7 +78,7 @@ export class FlashSyncStorage {
   async get<K extends keyof StorageData>(key: K): Promise<StorageData[K] | null> {
     try {
       const value = await this.storage.get(key);
-      return value ?? null;
+      return (value ?? null) as StorageData[K] | null;
     } catch (error) {
       console.error(`Error getting ${String(key)} from sync storage:`, error);
       return null;
