@@ -1,0 +1,5 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#4F46E5" rx="80"/>
+  <path fill="#fff" d="M256 120l-80 80h50v120h-50l80 80 80-80h-50V200h50z"/>
+  <text x="256" y="420" font-family="Arial, sans-serif" font-size="80" font-weight="bold" fill="#fff" text-anchor="middle">Flash</text>
+</svg>

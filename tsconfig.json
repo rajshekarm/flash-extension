@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2020",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "react-jsx",
     "module": "ES2020",
     "moduleResolution": "bundler",
@@ -29,16 +33,37 @@
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "isolatedModules": true,
-    "types": ["chrome", "node"],
+    "types": [
+      "chrome",
+      "node"
+    ],
     "baseUrl": ".",
     "paths": {
-      "~*": ["./src/*"],
-      "@/components/*": ["./src/components/*"],
-      "@/lib/*": ["./src/lib/*"],
-      "@/types/*": ["./src/types/*"],
-      "@/assets/*": ["./src/assets/*"]
+      "~*": [
+        "./src/*"
+      ],
+      "@/components/*": [
+        "./src/components/*"
+      ],
+      "@/lib/*": [
+        "./src/lib/*"
+      ],
+      "@/types/*": [
+        "./src/types/*"
+      ],
+      "@/assets/*": [
+        "./src/assets/*"
+      ]
     }
   },
-  "include": ["src/**/*", ".plasmorc.ts"],
-  "exclude": ["node_modules", "build", "dist"]
+  "include": [
+    ".plasmo/index.d.ts",
+    "src/**/*",
+    ".plasmorc.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "build",
+    "dist"
+  ]
 }

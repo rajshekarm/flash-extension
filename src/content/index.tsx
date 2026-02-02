@@ -13,6 +13,7 @@ export const config: PlasmoCSConfig = {
     'https://*.greenhouse.io/*',
     'https://*.lever.co/*',
     'https://*.workday.com/*',
+    'https://*.myworkdayjobs.com/*',
     'https://www.indeed.com/viewjob*',
     'https://www.glassdoor.com/job-listing/*',
   ],

@@ -47,10 +47,20 @@ export class JobExtractor {
       domain: 'workday.com',
       name: 'Workday',
       selectors: {
-        title: ['[data-automation-id="jobPostingHeader"]', 'h2'],
-        company: ['[data-automation-id="company"]'],
-        location: ['[data-automation-id="locations"]'],
-        description: ['[data-automation-id="jobPostingDescription"]'],
+        title: ['[data-automation-id="jobPostingHeader"]', 'h2[class*="title"]', 'h1'],
+        company: ['[data-automation-id="company"]', '.company-name'],
+        location: ['[data-automation-id="locations"]', '[class*="location"]'],
+        description: ['[data-automation-id="jobPostingDescription"]', '[class*="description"]'],
+      },
+    },
+    {
+      domain: 'myworkdayjobs.com',
+      name: 'Workday',
+      selectors: {
+        title: ['[data-automation-id="jobPostingHeader"]', 'h2[class*="title"]', 'h1'],
+        company: ['[data-automation-id="company"]', '.company-name'],
+        location: ['[data-automation-id="locations"]', '[class*="location"]'],
+        description: ['[data-automation-id="jobPostingDescription"]', '[class*="description"]'],
       },
     },
   ];
