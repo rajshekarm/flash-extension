@@ -262,7 +262,7 @@ export class FormDetector {
 
     // Try name attribute
     if ('name' in element && element.name) {
-      return element.name.replace(/[_-]/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
+      return String(element.name).replace(/[_-]/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
     }
 
     return 'Unnamed Field';
@@ -316,9 +316,6 @@ export class FormDetector {
 
     // Skip password fields (security)
     if (field.type === 'password') return true;
-
-    // Skip submit buttons
-    if (field.type === 'submit') return true;
 
     // Skip fields with certain names (CSRF tokens, etc.)
     const skipNames = ['csrf', 'token', '_method', 'authenticity_token'];
