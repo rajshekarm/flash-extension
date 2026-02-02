@@ -59,7 +59,8 @@
       "activeTab",
       "storage",
       "sidePanel",
-      "scripting"
+      "scripting",
+      "contextMenus"
     ]
   }
 }

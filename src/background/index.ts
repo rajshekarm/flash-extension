@@ -311,48 +311,58 @@ async function injectContentScriptIfNeeded(tabId: number): Promise<void> {
  * Setup context menus
  */
 function setupContextMenus(): void {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: 'flash-analyze-job',
-      title: 'Analyze this job posting',
-      contexts: ['page', 'selection'],
-    });
-
-    chrome.contextMenus.create({
-      id: 'flash-fill-form',
-      title: 'Fill application form',
-      contexts: ['page'],
-    });
-
-    chrome.contextMenus.create({
-      id: 'flash-open-sidepanel',
-      title: 'Open Flash Assistant',
-      contexts: ['page'],
-    });
-  });
-}
-
-// Handle context menu clicks
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (!tab?.id) return;
-
-  switch (info.menuItemId) {
-    case 'flash-analyze-job':
-      // Send message to content script to analyze job
-      chrome.tabs.sendMessage(tab.id, { type: 'ANALYZE_JOB' });
-      break;
-
-    case 'flash-fill-form':
-      // Send message to content script to fill form
-      chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
-      break;
-
-    case 'flash-open-sidepanel':
-      // Open side panel
-      chrome.sidePanel.open({ tabId: tab.id });
-      break;
+  // Check if contextMenus API is available
+  if (!chrome.contextMenus) {
+    console.warn('[Flash Background] contextMenus API not available');
+    return;
   }
-});
+
+  try {
+    chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create({
+        id: 'flash-analyze-job',
+        title: 'Analyze this job posting',
+        contexts: ['page', 'selection'],
+      });
+
+      chrome.contextMenus.create({
+        id: 'flash-fill-form',
+        title: 'Fill application form',
+        contexts: ['page'],
+      });
+
+      chrome.contextMenus.create({
+        id: 'flash-open-sidepanel',
+        title: 'Open Flash Assistant',
+        contexts: ['page'],
+      });
+    });
+
+    // Handle context menu clicks
+    chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+      if (!tab?.id) return;
+
+      switch (info.menuItemId) {
+        case 'flash-analyze-job':
+          // Send message to content script to analyze job
+          chrome.tabs.sendMessage(tab.id, { type: 'ANALYZE_JOB' });
+          break;
+
+        case 'flash-fill-form':
+          // Send message to content script to fill form
+          chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+          break;
+
+        case 'flash-open-sidepanel':
+          // Open side panel
+          chrome.sidePanel.open({ tabId: tab.id });
+          break;
+      }
+    });
+  } catch (error) {
+    console.error('[Flash Background] Error setting up context menus:', error);
+  }
+}
 
 // Keep service worker alive (optional, for development)
 if (process.env.NODE_ENV === 'development') {

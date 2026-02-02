@@ -95,12 +95,23 @@ export default function Popup() {
     <div className="w-96 bg-gray-50">
       {/* Header */}
       <div className="bg-gradient-to-r from-primary-600 to-primary-700 text-white p-4">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">⚡</span>
-          <div>
-            <h1 className="text-lg font-bold">Flash Assistant</h1>
-            <p className="text-xs text-primary-100">AI Job Application Helper</p>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">⚡</span>
+            <div>
+              <h1 className="text-lg font-bold">Flash Assistant</h1>
+              <p className="text-xs text-primary-100">AI Job Application Helper</p>
+            </div>
           </div>
+          <button
+            onClick={handleOpenSidePanel}
+            className="bg-white bg-opacity-20 hover:bg-opacity-30 rounded-full p-2 transition-colors"
+            title="Open Side Panel"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
         </div>
       </div>
 
