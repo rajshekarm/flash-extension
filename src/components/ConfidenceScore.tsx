@@ -8,7 +8,7 @@ interface ConfidenceScoreProps {
 }
 
 export function ConfidenceScore({ score, showLabel = true, size = 'md' }: ConfidenceScoreProps) {
-  const { level, color, text } = formatConfidence(score);
+  const { color, text } = formatConfidence(score);
   
   const sizeStyles = {
     sm: 'text-xs px-2 py-0.5',

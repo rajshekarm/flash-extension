@@ -48,19 +48,14 @@
     "vitest": "^1.2.0"
   },
   "manifest": {
-    "host_permissions": [
-      "https://www.linkedin.com/*",
-      "https://www.indeed.com/*",
-      "https://jobs.lever.co/*",
-      "https://boards.greenhouse.io/*",
-      "https://*.workday.com/*"
-    ],
-    "permissions": [
-      "activeTab",
-      "storage",
-      "sidePanel",
-      "scripting",
-      "contextMenus"
-    ]
-  }
+  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "activeTab",
+    "storage",
+    "sidePanel",
+    "scripting",
+    "contextMenus"
+  ]
+}
+
 }

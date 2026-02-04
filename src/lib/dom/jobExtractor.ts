@@ -350,7 +350,6 @@ export class JobExtractor {
    */
   isJobPage(): boolean {
     const url = window.location.href.toLowerCase();
-    const title = document.title.toLowerCase();
 
     // Check URL patterns
     const urlPatterns = [

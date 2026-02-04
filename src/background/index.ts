@@ -27,7 +27,6 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // Set up context menus
   setupContextMenus();
 });
-
 // Handle extension startup
 chrome.runtime.onStartup.addListener(async () => {
   console.log('[Flash Background] Browser started, restoring state...');

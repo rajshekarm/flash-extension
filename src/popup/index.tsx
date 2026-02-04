@@ -4,13 +4,14 @@ import { useState, useEffect } from 'react';
 import { Button } from '~components/Button';
 import { Card } from '~components/Card';
 import { Spinner } from '~components/Spinner';
-import { sendMessage } from '~lib/utils/helpers';
 
 export default function Popup() {
   const [loading, setLoading] = useState(true);
   const [jobDetected, setJobDetected] = useState(false);
+  const [jobInfo, setJobInfo] = useState<any>(null);
   const [formsDetected, setFormsDetected] = useState(0);
   const [analyzing, setAnalyzing] = useState(false);
+  const [filling, setFilling] = useState(false);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -35,6 +36,7 @@ export default function Popup() {
           const jobResponse = await chrome.tabs.sendMessage(tab.id, { type: 'GET_JOB_INFO' });
           const formsResponse = await chrome.tabs.sendMessage(tab.id, { type: 'GET_FORMS' });
           
+          setJobInfo(jobResponse.data);
           setJobDetected(!!jobResponse.data);
           setFormsDetected(formsResponse.data?.forms?.length || 0);
           setConnected(true);
@@ -69,6 +71,27 @@ export default function Popup() {
       console.error(error);
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function handleFillApplication() {
+    setFilling(true);
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) return;
+
+      const response = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+      
+      if (response.success) {
+        alert('Application filled! Review the answers before submitting.');
+      } else {
+        alert(`Failed to fill application: ${response.error}`);
+      }
+    } catch (error) {
+      alert('Error filling application');
+      console.error(error);
+    } finally {
+      setFilling(false);
     }
   }
 
@@ -126,6 +149,27 @@ export default function Popup() {
           </Card>
         ) : (
           <>
+            {/* Job Info */}
+            {jobInfo && (
+              <Card>
+                <h3 className="font-semibold mb-2">Detected Job</h3>
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-gray-900">{jobInfo.title}</p>
+                  {jobInfo.company && (
+                    <p className="text-xs text-gray-600">📍 {jobInfo.company}</p>
+                  )}
+                  {jobInfo.location && (
+                    <p className="text-xs text-gray-600">🌎 {jobInfo.location}</p>
+                  )}
+                  {jobInfo.description && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      {jobInfo.description.substring(0, 100)}...
+                    </p>
+                  )}
+                </div>
+              </Card>
+            )}
+
             {/* Detection Status */}
             <Card>
               <h3 className="font-semibold mb-3">Page Status</h3>
@@ -147,24 +191,34 @@ export default function Popup() {
 
             {/* Actions */}
             <Card>
-              <h3 className="font-semibold mb-3">Actions</h3>
+              <h3 className="font-semibold mb-3">Quick Actions</h3>
               <div className="space-y-2">
                 <Button
                   variant="primary"
                   className="w-full"
                   onClick={handleAnalyzeJob}
                   loading={analyzing}
-                  disabled={!jobDetected}
+                  disabled={!jobDetected || analyzing}
                 >
-                  {analyzing ? 'Analyzing...' : 'Analyze Job'}
+                  {analyzing ? 'Analyzing...' : '🎯 Analyze Job Match'}
                 </Button>
                 
                 <Button
                   variant="primary"
                   className="w-full"
+                  onClick={handleFillApplication}
+                  loading={filling}
+                  disabled={formsDetected === 0 || filling}
+                >
+                  {filling ? 'Filling...' : '✍️ Fill Application'}
+                </Button>
+                
+                <Button
+                  variant="secondary"
+                  className="w-full"
                   onClick={handleOpenSidePanel}
                 >
-                  Open Side Panel
+                  📊 Open Side Panel
                 </Button>
                 
                 <Button
@@ -172,7 +226,7 @@ export default function Popup() {
                   className="w-full"
                   onClick={handleOpenOptions}
                 >
-                  Settings
+                  ⚙️ Settings
                 </Button>
               </div>
             </Card>

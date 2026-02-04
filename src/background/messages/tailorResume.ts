@@ -1,7 +1,6 @@
 // Message handler for resume tailoring
 import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
-import { flashStorage } from '~lib/storage/chrome';
 import type { JobAnalysis } from '~types';
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
