@@ -3,7 +3,24 @@ import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
 import { flashSyncStorage } from '~lib/storage/chrome';
 import { parseUserProfileError } from '~lib/utils/userProfileErrors';
+// Helper function to timeout promises
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Profile deletion timed out after ${timeoutMs}ms - check if backend is running`));
+    }, timeoutMs);
 
+    promise
+      .then((result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+  });
+}
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
   console.log('[deleteUserProfile] Received request', req.body);
 
@@ -20,7 +37,11 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
 
     try {
       // Try to delete from backend first
-      await flashAPI.deleteUserProfile(userId);
+      console.log('[deleteUserProfile] Deleting profile from backend...');
+      await withTimeout(
+        flashAPI.deleteUserProfile(userId),
+        10000 // 10 second timeout for profile deletion
+      );
       
       // Remove from local cache
       const cachedProfile = await flashSyncStorage.get('userProfile');

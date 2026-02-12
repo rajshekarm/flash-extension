@@ -305,13 +305,24 @@ export async function listUserProfiles() {
 
 // Helper function that automatically chooses the right messaging method
 async function sendMessage(message: { name: string; body: any }) {
+  // Add timeout wrapper to prevent hanging
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Message '${message.name}' timed out after 10 seconds - background script may not be responding`));
+    }, 10000);
+  });
+
+  let messagePromise: Promise<any>;
+  
   // Check if we're in a content script context
   if (typeof sendToBackground !== 'undefined') {
-    return await sendToBackground(message as any);
+    messagePromise = sendToBackground(message as any);
   } else {
     // We're in extension context (popup, sidepanel, etc.)
-    return await chrome.runtime.sendMessage(message);
+    messagePromise = chrome.runtime.sendMessage(message);
   }
+
+  return Promise.race([messagePromise, timeoutPromise]);
 }
 
 // Authentication helper functions
@@ -372,10 +383,13 @@ export async function logout() {
 
 export async function checkAuth() {
   try {
+    console.log('[checkAuth] Sending auth check message to background...');
     const response = await sendMessage({
       name: 'checkAuth',
       body: {}
     });
+    
+    console.log('[checkAuth] Received response:', response);
     
     if (response?.success) {
       return {
@@ -387,6 +401,40 @@ export async function checkAuth() {
     }
   } catch (error) {
     console.error('[checkAuth] Error:', error);
+    
+    // If it's a timeout or communication error, try to check local storage as fallback
+    const isTimeoutOrCommError = error instanceof Error && 
+      (error.message.includes('timed out') || 
+       error.message.includes('message port closed') ||
+       error.message.includes('receiving end does not exist'));
+    
+    if (isTimeoutOrCommError) {
+      console.log('[checkAuth] Background communication failed, checking local storage...');
+      
+      // Try to get cached auth data
+      try {
+        const authSession = await flashStorage.get('authSession');
+        const authToken = await flashStorage.get('authToken');
+        
+        if (authSession && authToken) {
+          // Check if token is still valid (not expired by more than 15 minutes)
+          const expiresAt = new Date(authSession.expires_at);
+          const now = new Date();
+          const fifteenMinutes = 15 * 60 * 1000;
+          
+          if (expiresAt.getTime() + fifteenMinutes > now.getTime()) {
+            console.log('[checkAuth] Using cached auth session as fallback');
+            return {
+              authenticated: true,
+              user: authSession.user
+            };
+          }
+        }
+      } catch (storageError) {
+        console.error('[checkAuth] Local storage fallback failed:', storageError);
+      }
+    }
+    
     return {
       authenticated: false,
       user: null

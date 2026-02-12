@@ -3,6 +3,25 @@ import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
 import { flashStorage } from '~lib/storage/chrome';
 import { parseUserProfileError } from '~lib/utils/userProfileErrors';
+
+// Helper function to timeout promises
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Registration timed out after ${timeoutMs}ms - check if backend is running`));
+    }, timeoutMs);
+
+    promise
+      .then((result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+  });
+}
 import type { RegisterCredentials } from '~types';
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
@@ -26,7 +45,11 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
     console.log('[register] Calling Flash API...', { name, email });
 
     // Call Flash API to register
-    const authSession = await flashAPI.register({ name, email, password });
+    console.log('[register] Attempting registration with backend...');
+    const authSession = await withTimeout(
+      flashAPI.register({ name, email, password }),
+      15000 // 15 second timeout for registration
+    );
 
     // Store authentication session and tokens
     await flashStorage.set('authSession', authSession);

@@ -4,6 +4,25 @@ import { flashAPI } from '~lib/api';
 import { flashStorage } from '~lib/storage/chrome';
 import { parseUserProfileError } from '~lib/utils/userProfileErrors';
 
+// Helper function to timeout promises
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Token refresh timed out after ${timeoutMs}ms - check if backend is running`));
+    }, timeoutMs);
+
+    promise
+      .then((result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+  });
+}
+
 const handler: PlasmoMessaging.MessageHandler = async (_req, res) => {
   console.log('[refreshToken] Received request');
 
@@ -18,7 +37,11 @@ const handler: PlasmoMessaging.MessageHandler = async (_req, res) => {
     console.log('[refreshToken] Calling Flash API...');
 
     // Call Flash API to refresh token
-    const refreshResponse = await flashAPI.refreshToken({ refresh_token: refreshToken });
+    console.log('[refreshToken] Refreshing token with backend...');
+    const refreshResponse = await withTimeout(
+      flashAPI.refreshToken({ refresh_token: refreshToken }),
+      10000 // 10 second timeout for token refresh
+    );
 
     // Update stored tokens
     await flashStorage.set('authToken', refreshResponse.access_token);

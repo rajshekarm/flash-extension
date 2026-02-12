@@ -3,7 +3,24 @@ import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
 import { flashSyncStorage } from '~lib/storage/chrome';
 import { parseUserProfileError } from '~lib/utils/userProfileErrors';
-import type { UserProfile } from '~types';
+// Helper function to timeout promises
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Profile update timed out after ${timeoutMs}ms - check if backend is running`));
+    }, timeoutMs);
+
+    promise
+      .then((result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+  });
+}import type { UserProfile } from '~types';
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
   console.log('[updateUserProfile] Received request', req.body);
@@ -34,7 +51,11 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
 
     try {
       // Try to update in backend first
-      const updatedProfile = await flashAPI.updateUserProfile(userId, profile);
+      console.log('[updateUserProfile] Updating profile with backend...');
+      const updatedProfile = await withTimeout(
+        flashAPI.updateUserProfile(userId, profile),
+        10000 // 10 second timeout for profile update
+      );
       
       // Update sync storage cache
       await flashSyncStorage.set('userProfile', updatedProfile);

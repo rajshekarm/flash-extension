@@ -20,23 +20,51 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    checkAuthStatus();
+    console.log('[AuthGuard] Component mounted, starting auth check...');
+    
+    let safetyTimeoutId: NodeJS.Timeout;
+    
+    const performAuthCheck = async () => {
+      // Safety timeout - if auth check takes too long, show error
+      safetyTimeoutId = setTimeout(() => {
+        console.error('[AuthGuard] Auth check timeout - taking too long');
+        setError('Authentication check is taking too long. Please try reloading the extension.');
+        setIsLoading(false);
+      }, 20000); // 20 second safety timeout
+      
+      await checkAuthStatus();
+      clearTimeout(safetyTimeoutId);
+    };
+    
+    performAuthCheck();
+    
+    return () => {
+      if (safetyTimeoutId) {
+        clearTimeout(safetyTimeoutId);
+      }
+    };
   }, []);
 
   const checkAuthStatus = async () => {
+    console.log('[AuthGuard] Starting auth check...');
     setIsLoading(true);
     setError('');
     
     try {
+      console.log('[AuthGuard] Calling checkAuth()...');
       const authResult = await checkAuth();
+      console.log('[AuthGuard] Auth result received:', authResult);
+      
       setIsAuthenticated(authResult.authenticated);
       setUser(authResult.user);
+      console.log('[AuthGuard] Auth state updated:', { authenticated: authResult.authenticated, hasUser: !!authResult.user });
     } catch (error) {
       console.error('[AuthGuard] Auth check failed:', error);
       setError('Failed to verify authentication status');
       setIsAuthenticated(false);
       setUser(null);
     } finally {
+      console.log('[AuthGuard] Auth check complete, setting loading to false');
       setIsLoading(false);
     }
   };
@@ -64,7 +92,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
     return (
       <div className="flex items-center justify-center p-8">
         <div className="text-center">
-          <Spinner size="large" />
+          <Spinner size="lg" />
           <p className="mt-2 text-sm text-gray-600">Checking authentication...</p>
         </div>
       </div>
