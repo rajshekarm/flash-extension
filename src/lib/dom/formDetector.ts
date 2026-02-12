@@ -21,9 +21,14 @@ export class FormDetector {
 
     forms.forEach((form) => {
       const score = this.scoreForm(form);
-      if (score.score > 0.3) {
-        // Only include forms that likely are application forms
-        const fields = this.extractFields(form);
+      const fields = this.extractFields(form);
+      
+      // Include forms with at least 1 fillable field OR high confidence score
+      // This catches account creation, login, and all application forms
+      // Note: Password fields are excluded for security, so even simple forms qualify
+      const shouldInclude = fields.length >= 1 || score.score > 0.3;
+      
+      if (shouldInclude) {
         detectedForms.push({
           element: form,
           action: form.action,
