@@ -13,10 +13,21 @@ export default function Popup() {
   const [analyzing, setAnalyzing] = useState(false);
   const [filling, setFilling] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [autoFillEnabled, setAutoFillEnabled] = useState(false);
 
   useEffect(() => {
     checkPageStatus();
+    loadAutoFillStatus();
   }, []);
+
+  async function loadAutoFillStatus() {
+    try {
+      const prefs = await chrome.storage.sync.get('preferences');
+      setAutoFillEnabled(prefs.preferences?.autoFill ?? false);
+    } catch (error) {
+      console.error('Error loading auto-fill status:', error);
+    }
+  }
 
   async function checkPageStatus() {
     try {
@@ -85,18 +96,57 @@ export default function Popup() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) return;
 
-      const response = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+      console.log('[Popup] Fill All Fields - Starting...');
+
+      // Step 1: Generate answers
+      const fillResponse = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
       
-      if (response.success) {
-        alert('Application filled! Review the answers before submitting.');
-      } else {
-        alert(`Failed to fill application: ${response.error}`);
+      if (!fillResponse.success) {
+        alert(`❌ Failed to generate answers:\n\n${fillResponse.error}`);
+        return;
       }
+
+      const answers = fillResponse.data?.answers || [];
+      console.log(`[Popup] Generated ${answers.length} answers`);
+
+      if (answers.length === 0) {
+        alert('⚠️ No answers generated. Please ensure:\n• Form fields are detected\n• User profile is set up\n• Backend API is running');
+        return;
+      }
+
+      // Step 2: Inject answers immediately
+      const injectResponse = await chrome.tabs.sendMessage(tab.id, { 
+        type: 'INJECT_ANSWERS',
+        payload: { answers }
+      });
+
+      if (injectResponse.success) {
+        const result = injectResponse.data;
+        alert(`✅ Form filled successfully!\n\n📊 Results:\n• Filled: ${result.filled} fields\n• Skipped: ${result.skipped}\n• Failed: ${result.failed}\n\n⚠️ Please review the form before submitting.`);
+      } else {
+        alert(`❌ Failed to fill form:\n\n${injectResponse.error}`);
+      }
+
     } catch (error) {
-      alert('Error filling application');
-      console.error(error);
+      console.error('[Popup] Error filling application:', error);
+      alert(`❌ Error:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setFilling(false);
+    }
+  }
+
+  async function handleToggleAutoFill() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) return;
+
+      const response = await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_AUTO_FILL' });
+      
+      if (response.success) {
+        setAutoFillEnabled(response.autoFillEnabled);
+      }
+    } catch (error) {
+      console.error('Error toggling auto-fill:', error);
     }
   }
 
@@ -198,16 +248,25 @@ export default function Popup() {
             <Card>
               <h3 className="font-semibold mb-3">Quick Actions</h3>
               <div className="space-y-2">
-                <Button
-                  variant="primary"
-                  className="w-full"
-                  onClick={handleAnalyzeJob}
-                  loading={analyzing}
-                  disabled={!jobDetected || analyzing}
-                >
-                  {analyzing ? 'Analyzing...' : '🎯 Analyze Job Match'}
-                </Button>
-                
+                {/* Auto-Fill Toggle */}
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">🤖</span>
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">Auto-Fill Forms</p>
+                      <p className="text-xs text-gray-500">Automatically fill applications</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleToggleAutoFill}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${autoFillEnabled ? 'bg-primary-600' : 'bg-gray-300'}`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${autoFillEnabled ? 'translate-x-6' : 'translate-x-1'}`}
+                    />
+                  </button>
+                </div>
+
                 <Button
                   variant="primary"
                   className="w-full"
@@ -215,7 +274,17 @@ export default function Popup() {
                   loading={filling}
                   disabled={formsDetected === 0 || filling}
                 >
-                  {filling ? 'Filling...' : '✍️ Fill Application'}
+                  {filling ? 'Filling...' : '⚡ Fill All Fields Now'}
+                </Button>
+                
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  onClick={handleAnalyzeJob}
+                  loading={analyzing}
+                  disabled={!jobDetected || analyzing}
+                >
+                  {analyzing ? 'Analyzing...' : '📊 Analyze Job Match'}
                 </Button>
                 
                 <Button

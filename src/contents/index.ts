@@ -8,7 +8,7 @@ import { FormDetector } from "~lib/dom/formDetector"
 import { JobExtractor } from "~lib/dom/jobExtractor"
 import { FieldInjector } from "~lib/dom/fieldInjector"
 import { debounce } from "~lib/utils/helpers"
-import { flashSyncStorage } from "~lib/storage/chrome"
+import { flashSyncStorage, flashStorage } from "~lib/storage/chrome"
 import type {
   Answer,
   ExtractedJobInfo,
@@ -37,6 +37,10 @@ const fieldInjector = new FieldInjector()
 let latestJobInfo: ExtractedJobInfo | null = null
 let latestForms: FormMetadata | null = null
 let statusIndicator: HTMLDivElement | null = null
+let autoFillEnabled = false
+let isProcessingForm = false
+let processedFormIds = new Set<string>()
+let lastFormDetectionTime = 0
 
 function ensureStatusIndicator() {
   if (statusIndicator && document.body?.contains(statusIndicator)) return
@@ -67,8 +71,15 @@ function updateStatus(message: string, show = true) {
   ensureStatusIndicator()
   if (!statusIndicator) return
 
-  statusIndicator.textContent = `Flash: ${message}`
+  statusIndicator.textContent = `⚡ Flash: ${message}`
   statusIndicator.style.opacity = show ? "1" : "0"
+  
+  // Auto-hide after 3 seconds unless it's an important status
+  if (show && !message.includes('filling') && !message.includes('processing')) {
+    setTimeout(() => {
+      if (statusIndicator) statusIndicator.style.opacity = "0"
+    }, 3000)
+  }
 }
 var extract = false;
 function extractJobInfo(): ExtractedJobInfo | null {
@@ -120,6 +131,15 @@ function detectForms(): FormMetadata | null {
           fields: form.fields.map(f => ({ label: f.label, type: f.type, required: f.required }))
         }))
       })
+      
+      // Trigger auto-fill if enabled and this is a new form
+      if (autoFillEnabled && !isProcessingForm) {
+        const formId = generateFormId(formData.forms[0])
+        if (!processedFormIds.has(formId)) {
+          console.log("[Flash AutoFill] New form detected, triggering auto-fill")
+          triggerAutoFill(formId)
+        }
+      }
     }
     return formData
   } catch (error) {
@@ -172,6 +192,8 @@ async function analyzeJob() {
 }
 
 async function fillApplication() {
+  console.log("[Flash Content] fillApplication called")
+  
   const forms = latestForms ?? detectForms()
   if (!forms?.forms?.length) {
     return { success: false, error: "No application form detected" }
@@ -179,10 +201,18 @@ async function fillApplication() {
 
   const userProfile = await flashSyncStorage.get("userProfile")
   if (!userProfile?.id) {
-    return { success: false, error: "User profile not found" }
+    return { success: false, error: "User profile not found. Please set up your profile in settings." }
   }
 
+  // Get current session to retrieve job_id from analysis
+  const currentSession = await flashStorage.get("currentSession")
+  const jobId = currentSession?.currentJob?.job_id
+  
+  console.log("[Flash Content] Session jobId:", jobId)
+
   const primaryForm = forms.forms[0]
+  console.log(`[Flash Content] Processing form with ${primaryForm.fields.length} fields`)
+  
   const normalizeFieldType = (type: string): FormField["type"] => {
     const allowed: FormField["type"][] = [
       "text",
@@ -210,16 +240,33 @@ async function fillApplication() {
   }))
 
   updateStatus("generating answers", true)
-  return await sendToBackground({
-    name: "fillApplication",
-    body: {
-      formFields,
-      userId: userProfile.id
+  
+  try {
+    const response = await sendToBackground({
+      name: "fillApplication",
+      body: {
+        formFields,
+        userId: userProfile.id,
+        jobId: jobId
+      }
+    })
+    
+    updateStatus("answers generated", true)
+    console.log("[Flash Content] Received answers:", response.success ? response.data.answers.length : "failed")
+    return response
+  } catch (error) {
+    console.error("[Flash Content] Error filling application:", error)
+    updateStatus("generation failed", true)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to generate answers. Check if backend is running."
     }
-  })
+  }
 }
 
 async function injectAnswers(answers: Answer[]) {
+  console.log("[Flash Content] injectAnswers called with", answers.length, "answers")
+  
   const forms = latestForms ?? detectForms()
   if (!forms?.forms?.length) {
     return { success: false, error: "No form fields available for injection" }
@@ -228,15 +275,30 @@ async function injectAnswers(answers: Answer[]) {
   updateStatus("injecting answers", true)
   const primaryForm = forms.forms[0]
   const answersMap = new Map<string, string>()
+  
+  // Map answers by field_id
   answers.forEach((answer) => {
     if (answer.field_id) {
       answersMap.set(answer.field_id, answer.answer)
+      console.log("[Flash Content] Mapping answer for field:", answer.field_id)
     }
   })
+  
+  console.log(`[Flash Content] Injecting ${answersMap.size} answers into ${primaryForm.fields.length} fields`)
 
-  const result = await fieldInjector.injectAnswers(primaryForm.fields, answersMap)
-  updateStatus("injection complete", true)
-  return { success: true, data: result }
+  try {
+    const result = await fieldInjector.injectAnswers(primaryForm.fields, answersMap)
+    updateStatus(`injected ${result.filled}/${result.total}`, true)
+    console.log("[Flash Content] Injection complete:", result)
+    return { success: true, data: result }
+  } catch (error) {
+    console.error("[Flash Content] Injection error:", error)
+    updateStatus("injection failed", true)
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : "Failed to inject answers"
+    }
+  }
 }
 
 function setupMutationObserver() {
@@ -246,7 +308,12 @@ function setupMutationObserver() {
   }, 1000)
 
   const observer = new MutationObserver(() => {
-    scan()
+    const now = Date.now()
+    // Throttle to avoid too frequent scans
+    if (now - lastFormDetectionTime > 2000) {
+      lastFormDetectionTime = now
+      scan()
+    }
   })
 
   if (document.body) {
@@ -257,8 +324,134 @@ function setupMutationObserver() {
   }
 }
 
+/**
+ * Generate unique ID for a form based on its structure
+ */
+function generateFormId(form: any): string {
+  const fieldSignature = form.fields
+    .map((f: any) => `${f.label}-${f.type}`)
+    .sort()
+    .join('|')
+  return `${window.location.pathname}-${fieldSignature}`.substring(0, 100)
+}
+
+/**
+ * Trigger automatic form filling
+ */
+async function triggerAutoFill(formId: string) {
+  if (isProcessingForm) {
+    console.log("[Flash AutoFill] Already processing, skipping")
+    return
+  }
+
+  try {
+    isProcessingForm = true
+    processedFormIds.add(formId)
+    
+    console.log("[Flash AutoFill] Starting auto-fill for form:", formId)
+    updateStatus("🤖 auto-filling form...", true)
+
+    // Step 1: Fill application
+    const fillResponse = await fillApplication()
+    
+    if (!fillResponse.success) {
+      console.error("[Flash AutoFill] Failed to generate answers:", fillResponse.error)
+      updateStatus(`❌ auto-fill failed: ${fillResponse.error}`, true)
+      isProcessingForm = false
+      return
+    }
+
+    const answers = fillResponse.data?.answers || []
+    console.log(`[Flash AutoFill] Generated ${answers.length} answers`)
+
+    // Step 2: Inject answers
+    if (answers.length > 0) {
+      const injectResponse = await injectAnswers(answers)
+      
+      if (injectResponse.success && injectResponse.data) {
+        const result = injectResponse.data
+        console.log(`[Flash AutoFill] Injection complete: ${result.filled}/${result.total} fields`)
+        updateStatus(`✅ filled ${result.filled} fields`, true)
+        
+        // Show notification
+        showNotification(
+          "Form Auto-Filled",
+          `Filled ${result.filled} fields. Please review before submitting.`,
+          "success"
+        )
+      } else {
+        console.error("[Flash AutoFill] Injection failed:", injectResponse.error)
+        updateStatus("❌ injection failed", true)
+      }
+    }
+
+    // Small delay before allowing next form
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    
+  } catch (error) {
+    console.error("[Flash AutoFill] Error:", error)
+    updateStatus("❌ auto-fill error", true)
+  } finally {
+    isProcessingForm = false
+  }
+}
+
+/**
+ * Show notification overlay
+ */
+function showNotification(title: string, message: string, type: 'success' | 'error' | 'info' = 'info') {
+  const notification = document.createElement('div')
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: ${type === 'success' ? '#10B981' : type === 'error' ? '#EF4444' : '#3B82F6'};
+    color: white;
+    padding: 16px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 999999;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    max-width: 320px;
+    animation: slideIn 0.3s ease;
+  `
+  
+  notification.innerHTML = `
+    <div style="font-weight: 600; margin-bottom: 4px;">${title}</div>
+    <div style="font-size: 12px; opacity: 0.9;">${message}</div>
+  `
+  
+  document.body?.appendChild(notification)
+  
+  // Auto-remove after 5 seconds
+  setTimeout(() => {
+    notification.style.animation = 'slideOut 0.3s ease'
+    setTimeout(() => notification.remove(), 300)
+  }, 5000)
+}
+
+/**
+ * Initialize preferences and auto-fill settings
+ */
+async function initializeAutoFill() {
+  try {
+    const prefs = await flashSyncStorage.get('preferences')
+    autoFillEnabled = prefs?.autoFill ?? false
+    
+    console.log('[Flash Content] Auto-fill enabled:', autoFillEnabled)
+    
+    if (autoFillEnabled) {
+      updateStatus('🤖 auto-fill active', true)
+    }
+  } catch (error) {
+    console.error('[Flash Content] Error loading preferences:', error)
+  }
+}
+
 function initialScan() {
   updateStatus("starting scan", true)
+  initializeAutoFill()
   extractJobInfo()
   detectForms()
   setupMutationObserver()
@@ -303,6 +496,54 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
       case "INJECT_ANSWERS":
         sendResponse(await injectAnswers(message.payload?.answers || []))
+        break
+      
+      case "TOGGLE_AUTO_FILL":
+        autoFillEnabled = !autoFillEnabled
+        console.log("[Flash Content] Auto-fill toggled:", autoFillEnabled)
+        updateStatus(autoFillEnabled ? "🤖 auto-fill enabled" : "⏸️ auto-fill disabled", true)
+        
+        // Update preferences
+        const currentPrefs = await flashSyncStorage.get('preferences')
+        if (currentPrefs) {
+          await flashSyncStorage.set('preferences', {
+            ...currentPrefs,
+            autoFill: autoFillEnabled
+          })
+        } else {
+          await flashSyncStorage.set('preferences', {
+            autoFill: autoFillEnabled,
+            autoAnalyze: false,
+            autoOpenSidepanel: false,
+            minConfidence: 0.5,
+            highlightFilled: true,
+            enableNotifications: true,
+            theme: 'auto'
+          })
+        }
+        
+        sendResponse({ success: true, autoFillEnabled })
+        break
+      
+      case "ENABLE_AUTO_FILL":
+        autoFillEnabled = true
+        console.log("[Flash Content] Auto-fill enabled")
+        updateStatus("🤖 auto-fill enabled", true)
+        sendResponse({ success: true })
+        break
+      
+      case "DISABLE_AUTO_FILL":
+        autoFillEnabled = false
+        isProcessingForm = false
+        console.log("[Flash Content] Auto-fill disabled")
+        updateStatus("⏸️ auto-fill disabled", true)
+        sendResponse({ success: true })
+        break
+      
+      case "RESET_PROCESSED_FORMS":
+        processedFormIds.clear()
+        console.log("[Flash Content] Cleared processed forms cache")
+        sendResponse({ success: true })
         break
 
       default:

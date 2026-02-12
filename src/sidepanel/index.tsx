@@ -18,6 +18,7 @@ export default function SidePanel() {
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [injecting, setInjecting] = useState(false);
+  const [filling, setFilling] = useState(false);
 
   useEffect(() => {
     loadInitialData();
@@ -78,6 +79,62 @@ export default function SidePanel() {
     }
   }
 
+  async function handleFillApplication() {
+    if (!forms?.forms?.length) {
+      alert('❌ No forms detected. Please navigate to a job application page.');
+      return;
+    }
+
+    setFilling(true);
+    try {
+      const window = await chrome.windows.getCurrent();
+      const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
+      if (!tab?.id) {
+        alert('❌ Could not find active tab');
+        return;
+      }
+
+      console.log('[Side Panel] Fill All Fields - Starting...');
+
+      // Step 1: Generate answers
+      const fillResponse = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+      
+      if (!fillResponse.success) {
+        alert(`❌ Failed to generate answers:\n\n${fillResponse.error}`);
+        return;
+      }
+
+      const answers = fillResponse.data?.answers || [];
+      console.log(`[Side Panel] Generated ${answers.length} answers`);
+
+      if (answers.length === 0) {
+        alert('⚠️ No answers generated. Please ensure:\n• Form fields are detected\n• User profile is set up\n• Backend API is running');
+        return;
+      }
+
+      // Step 2: Inject answers immediately
+      const injectResponse = await chrome.tabs.sendMessage(tab.id, { 
+        type: 'INJECT_ANSWERS',
+        payload: { answers }
+      });
+
+      if (injectResponse.success) {
+        const result = injectResponse.data;
+        setAnswers(answers);
+        setCurrentStep('review');
+        alert(`✅ Form filled successfully!\n\n📊 Results:\n• Filled: ${result.filled} fields\n• Skipped: ${result.skipped}\n• Failed: ${result.failed}\n\n⚠️ Please review the form before submitting.`);
+      } else {
+        alert(`❌ Failed to fill form:\n\n${injectResponse.error}`);
+      }
+
+    } catch (error) {
+      console.error('[Side Panel] Error filling application:', error);
+      alert(`❌ Error:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setFilling(false);
+    }
+  }
+
   async function handleGenerateAnswers() {
     setGenerating(true);
     try {
@@ -85,17 +142,47 @@ export default function SidePanel() {
       const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
       if (!tab?.id) return;
 
-      const response = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+      console.log('[Sidepanel] Fill All Fields - Starting...');
       
-      if (response.success) {
-        setAnswers(response.data.answers || []);
-        setCurrentStep('filling');
-      } else {
-        alert(`Failed to generate answers: ${response.error}`);
+      // Step 1: Generate answers
+      const fillResponse = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+      
+      if (!fillResponse.success) {
+        const errorMsg = fillResponse.error || 'Unknown error occurred';
+        alert(`❌ Failed to generate answers:\n\n${errorMsg}\n\nTroubleshooting:\n• Ensure backend API is running\n• Check user profile is configured\n• Check browser console for details`);
+        return;
       }
+
+      const answers = fillResponse.data?.answers || [];
+      console.log(`[Sidepanel] Generated ${answers.length} answers`);
+      
+      if (answers.length === 0) {
+        alert('⚠️ No answers generated. Please ensure:\n• Form fields are detected\n• User profile is set up\n• Backend API is running');
+        return;
+      }
+
+      setAnswers(answers);
+
+      // Step 2: Immediately inject answers
+      const injectResponse = await chrome.tabs.sendMessage(tab.id, { 
+        type: 'INJECT_ANSWERS',
+        payload: { answers }
+      });
+
+      if (injectResponse.success && injectResponse.data) {
+        const result = injectResponse.data;
+        console.log('[Sidepanel] Injection result:', result);
+        setCurrentStep('review');
+        alert(`✅ Form filled successfully!\n\n📊 Results:\n• Filled: ${result.filled}\n• Skipped: ${result.skipped}\n• Failed: ${result.failed}\n\n⚠️ Please review the form before submitting.`);
+      } else {
+        // Keep answers visible even if injection fails
+        setCurrentStep('filling');
+        alert(`❌ Failed to inject answers:\n\n${injectResponse.error || 'Unknown error'}\n\nAnswers are still available for manual review.`);
+      }
+
     } catch (error) {
-      alert('Error generating answers');
-      console.error(error);
+      console.error('[Sidepanel] Error:', error);
+      alert(`❌ Error:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setGenerating(false);
     }
@@ -108,20 +195,23 @@ export default function SidePanel() {
       const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
       if (!tab?.id) return;
 
+      console.log(`[Sidepanel] Injecting ${answers.length} answers into form`);
       const response = await chrome.tabs.sendMessage(tab.id, { 
         type: 'INJECT_ANSWERS',
         payload: { answers }
       });
       
       if (response.success) {
+        const result = response.data;
+        console.log('[Sidepanel] Injection result:', result);
         setCurrentStep('review');
-        alert('Answers injected! Please review the form before submitting.');
+        alert(`✅ Answers injected successfully!\n\n📊 Results:\n• Filled: ${result.filled}\n• Skipped: ${result.skipped}\n• Failed: ${result.failed}\n\n⚠️ Please review the form before submitting.`);
       } else {
-        alert(`Failed to inject: ${response.error}`);
+        alert(`❌ Failed to inject answers:\n\n${response.error}`);
       }
     } catch (error) {
-      alert('Error injecting answers');
-      console.error(error);
+      console.error('[Sidepanel] Error injecting answers:', error);
+      alert(`❌ Error injecting answers:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setInjecting(false);
     }
@@ -248,15 +338,38 @@ export default function SidePanel() {
             </Card>
 
             <Card>
-              <Button
-                variant="primary"
-                className="w-full"
-                onClick={handleAnalyzeJob}
-                loading={analyzing}
-                disabled={!jobInfo || analyzing}
-              >
-                {analyzing ? 'Analyzing...' : '📊 Analyze Job Match'}
-              </Button>
+              <h3 className="font-semibold mb-3">Quick Actions</h3>
+              <div className="space-y-3">
+                {/* Primary Action - Fill Form */}
+                <Button
+                  variant="primary"
+                  className="w-full"
+                  onClick={handleFillApplication}
+                  loading={filling}
+                  disabled={!forms?.forms?.length || filling}
+                >
+                  {filling ? 'Filling...' : '⚡ Fill All Fields Now'}
+                </Button>
+                <p className="text-xs text-gray-500 text-center -mt-1">
+                  One-click form filling with AI-generated answers
+                </p>
+
+                {/* Optional - Analyze Job */}
+                <details className="mt-3">
+                  <summary className="text-sm text-gray-600 cursor-pointer hover:text-gray-900">
+                    Optional: Analyze job match first
+                  </summary>
+                  <Button
+                    variant="secondary"
+                    className="w-full mt-2"
+                    onClick={handleAnalyzeJob}
+                    loading={analyzing}
+                    disabled={!jobInfo || analyzing}
+                  >
+                    {analyzing ? 'Analyzing...' : '📊 Analyze Job Match'}
+                  </Button>
+                </details>
+              </div>
             </Card>
           </>
         )}
@@ -290,8 +403,11 @@ export default function SidePanel() {
                     loading={generating}
                     disabled={!forms?.forms?.length || generating}
                   >
-                    {generating ? 'Generating...' : '✍️ Generate Application Answers'}
+                    {generating ? 'Filling Form...' : '⚡ Fill All Fields Now'}
                   </Button>
+                  <p className="text-xs text-gray-500 mt-2 text-center">
+                    Generates answers and fills form in one click
+                  </p>
                 </Card>
               </>
             ) : (
@@ -314,16 +430,26 @@ export default function SidePanel() {
               <>
                 <Card>
                   <h3 className="font-semibold mb-4">Generated Answers ({answers.length})</h3>
+                  <p className="text-sm text-gray-600 mb-3">
+                    ⚠️ Answers generated but injection may have failed. Review below:
+                  </p>
                   <div className="space-y-3 max-h-96 overflow-y-auto">
                     {answers.map((answer: any, idx: number) => (
                       <div key={idx} className="p-3 bg-gray-50 rounded-lg border border-gray-200">
                         <p className="text-sm font-medium text-gray-900 mb-1">
-                          {answer.field_label || `Field ${idx + 1}`}
+                          {answer.question || answer.field_label || `Field ${idx + 1}`}
                         </p>
-                        <p className="text-sm text-gray-700">{answer.answer}</p>
-                        {answer.confidence && (
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">{answer.answer}</p>
+                        {answer.confidence !== undefined && (
                           <div className="mt-2">
                             <ConfidenceScore score={answer.confidence} size="sm" />
+                          </div>
+                        )}
+                        {answer.sources && answer.sources.length > 0 && (
+                          <div className="mt-1">
+                            <p className="text-xs text-gray-500">
+                              📚 Sources: {answer.sources.join(', ')}
+                            </p>
                           </div>
                         )}
                       </div>
@@ -339,19 +465,19 @@ export default function SidePanel() {
                     loading={injecting}
                     disabled={injecting}
                   >
-                    {injecting ? 'Injecting...' : '💉 Inject Answers to Form'}
+                    {injecting ? 'Injecting...' : '💉 Retry Injection'}
                   </Button>
                   <p className="text-xs text-gray-500 mt-2 text-center">
-                    Review answers before injecting
+                    Manually retry filling the form
                   </p>
                 </Card>
               </>
             ) : (
               <Card>
                 <div className="text-center py-8">
-                  <p className="text-gray-600 mb-4">No answers generated yet</p>
-                  <Button variant="primary" onClick={handleGenerateAnswers} loading={generating}>
-                    Generate Answers Now
+                  <p className="text-gray-600 mb-4">No answers available</p>
+                  <Button variant="primary" onClick={() => setCurrentStep('analysis')}>
+                    Go Back
                   </Button>
                 </div>
               </Card>
