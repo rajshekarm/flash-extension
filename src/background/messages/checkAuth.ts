@@ -6,14 +6,20 @@ const handler: PlasmoMessaging.MessageHandler = async (_req, res) => {
   console.log('[checkAuth] Checking authentication status...');
 
   try {
+    // DEBUG: Check raw Chrome storage
+    const rawStorage = await chrome.storage.local.get(['authSession', 'authToken', 'refreshToken']);
+    console.log('[checkAuth] RAW Chrome Storage:', rawStorage);
+    
     // Get stored auth session and token
     const authSession = await flashStorage.get('authSession');
     const authToken = await flashStorage.get('authToken');
     
-    console.log('[checkAuth] Auth data found:', { 
+    console.log('[checkAuth] FlashStorage.get() results:', { 
       hasSession: !!authSession, 
       hasToken: !!authToken,
-      expiresAt: authSession?.expires_at
+      expiresAt: authSession?.expires_at,
+      hasUser: !!authSession?.user,
+      userId: authSession?.user?.id
     });
     
     if (!authSession || !authToken) {
@@ -27,7 +33,7 @@ const handler: PlasmoMessaging.MessageHandler = async (_req, res) => {
     }
 
     // Simple expiration check
-    const expiresAt = new Date(authSession.expires_at || authSession.expiresAt);
+    const expiresAt = new Date(authSession.expires_at);
     const now = new Date();
     
     if (expiresAt <= now) {

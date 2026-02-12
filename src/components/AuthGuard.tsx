@@ -51,6 +51,10 @@ export function AuthGuard({ children }: AuthGuardProps) {
     setError('');
     
     try {
+      // DEBUG: Check raw Chrome storage
+      const rawStorage = await chrome.storage.local.get(['authSession', 'authToken', 'refreshToken']);
+      console.log('[AuthGuard] RAW Chrome Storage:', rawStorage);
+      
       console.log('[AuthGuard] Calling checkAuth()...');
       const authResult = await checkAuth();
       console.log('[AuthGuard] Auth result received:', authResult);

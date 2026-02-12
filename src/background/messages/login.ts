@@ -32,6 +32,20 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
       await flashStorage.set('refreshToken', authSession.refresh_token);
     }
 
+    // DEBUG: Verify what was stored
+    const verifySession = await flashStorage.get('authSession');
+    const verifyToken = await flashStorage.get('authToken');
+    console.log('[login] Stored auth data verification:', {
+      sessionStored: !!verifySession,
+      tokenStored: !!verifyToken,
+      hasUser: !!verifySession?.user,
+      userId: verifySession?.user?.id
+    });
+    
+    // DEBUG: Check raw Chrome storage
+    const rawStorage = await chrome.storage.local.get(['authSession', 'authToken', 'refreshToken']);
+    console.log('[login] RAW Chrome Storage after storing:', rawStorage);
+
     console.log('[login] Login successful');
     res.send({ success: true, data: authSession });
 

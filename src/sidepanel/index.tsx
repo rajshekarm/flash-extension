@@ -119,18 +119,75 @@ function MainSidePanelContent() {
 
     setSavingProfile(true);
     try {
-      // Check auth directly from storage instead of relying on getCurrentAuthUser
-      const authSession = await flashStorage.get('authSession');
-      const authToken = await flashStorage.get('authToken');
+      // DEBUG: Check what's actually in Chrome storage using raw API
+      const rawStorage = await chrome.storage.local.get(['authSession', 'authToken', 'refreshToken']);
+      console.log('[handleSaveProfile] RAW Chrome Storage:', rawStorage);
       
-      console.log('[handleSaveProfile] Auth check:', { 
+      // Check auth directly from storage instead of relying on getCurrentAuthUser
+      let authSession = await flashStorage.get('authSession');
+      let authToken = await flashStorage.get('authToken');
+      
+      console.log('[handleSaveProfile] FlashStorage.get() results:', { 
         hasSession: !!authSession, 
         hasToken: !!authToken,
-        userId: authSession?.user?.id 
+        userId: authSession?.user?.id,
+        sessionDetails: authSession ? {
+          hasUser: !!authSession.user,
+          userName: authSession.user?.name,
+          userEmail: authSession.user?.email,
+          expiresAt: authSession.expires_at,
+          tokenType: authSession.token_type
+        } : null,
+        tokenLength: authToken ? authToken.length : 0
       });
       
+      // If storage check fails, try verifying through background message handler
       if (!authSession || !authToken || !authSession.user) {
-        alert('Authentication required. Please log in again.');
+        console.log('[handleSaveProfile] Direct storage check failed, trying background message...');
+        
+        try {
+          const authCheck = await chrome.runtime.sendMessage({
+            name: 'checkAuth',
+            body: {}
+          });
+          
+          console.log('[handleSaveProfile] Background auth check result:', authCheck);
+          
+          if (!authCheck?.authenticated || !authCheck?.data) {
+            setSavingProfile(false);
+            alert('Authentication required. Please log out and log back in.\n\nYour session may have expired or storage may be corrupted.');
+            return;
+          }
+          
+          // If background check passed, retrieve from storage again
+          authSession = await flashStorage.get('authSession');
+          authToken = await flashStorage.get('authToken');
+          
+          if (!authSession || !authToken || !authSession.user) {
+            setSavingProfile(false);
+            alert('Storage access error. Please try:\n1. Refreshing the page\n2. Reloading the extension\n3. Logging out and back in');
+            return;
+          }
+        } catch (checkError) {
+          console.error('[handleSaveProfile] Background auth check failed:', checkError);
+          setSavingProfile(false);
+          alert('Extension communication error. Please try:\n1. Refreshing the page\n2. Reloading the extension');
+          return;
+        }
+      }
+      
+      // At this point, authSession and authToken are guaranteed to be non-null
+      // Check if token is expired
+      const expiresAt = new Date(authSession.expires_at);
+      const now = new Date();
+      
+      if (expiresAt <= now) {
+        setSavingProfile(false);
+        console.error('[handleSaveProfile] Token expired:', {
+          expiresAt: expiresAt.toISOString(),
+          now: now.toISOString()
+        });
+        alert('Your session has expired. Please log out and log back in.');
         return;
       }
 
@@ -164,6 +221,7 @@ function MainSidePanelContent() {
         }
       } catch (messageError) {
         console.error('[handleSaveProfile] Message error:', messageError);
+        setSavingProfile(false);
         alert('Extension communication error. Try reloading the page.');
         return;
       }

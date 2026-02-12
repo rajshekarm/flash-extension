@@ -224,7 +224,14 @@ export class FlashAPI {
   async login(credentials: LoginRequest): Promise<AuthSession> {
     console.log('[FlashAPI] Attempting login...', { email: credentials.email });
     const response = await apiClient.getClient()!.post('/api/flash/auth/login', credentials);
-    const authSession = response.data;
+    
+    // Backend returns {success, data} wrapper - extract actual auth session
+    const authSession = response.data.data || response.data;
+    console.log('[FlashAPI] Login response unwrapped:', {
+      hasWrapper: !!response.data.data,
+      hasUser: !!authSession.user,
+      hasToken: !!authSession.access_token
+    });
     
     // Update API client with new auth token
     await apiClient.setAuthToken(authSession.access_token);
@@ -246,7 +253,13 @@ export class FlashAPI {
         data: response.data
       });
       
-      const authSession = response.data;
+      // Backend returns {success, data} wrapper - extract actual auth session
+      const authSession = response.data.data || response.data;
+      console.log('[FlashAPI] Registration response unwrapped:', {
+        hasWrapper: !!response.data.data,
+        hasUser: !!authSession.user,
+        hasToken: !!authSession.access_token
+      });
       
       // Update API client with new auth token
       await apiClient.setAuthToken(authSession.access_token);
