@@ -9,6 +9,11 @@ import type {
   FormField,
   UserProfile,
   ApplicationData,
+  LoginRequest,
+  RegisterRequest,
+  AuthSession,
+  AuthUser,
+  RefreshTokenRequest,
 } from '~types';
 
 export class FlashAPI {
@@ -104,15 +109,38 @@ export class FlashAPI {
    * Get user profile
    */
   async getUserProfile(userId: string): Promise<UserProfile> {
-    const response = await apiClient.getClient()!.get(`/api/flash/profile/${userId}`);
+    const response = await apiClient.getClient()!.get(`/api/flash/user-profile/${userId}`);
     return response.data;
   }
 
   /**
-   * Create or update user profile
+   * Create a new user profile
    */
-  async saveUserProfile(profile: UserProfile): Promise<UserProfile> {
-    const response = await apiClient.getClient()!.post('/api/flash/profile', profile);
+  async createUserProfile(profile: UserProfile): Promise<UserProfile> {
+    const response = await apiClient.getClient()!.post('/api/flash/user-profile', profile);
+    return response.data;
+  }
+
+  /**
+   * Update an existing user profile
+   */
+  async updateUserProfile(userId: string, profile: UserProfile): Promise<UserProfile> {
+    const response = await apiClient.getClient()!.put(`/api/flash/user-profile/${userId}`, profile);
+    return response.data;
+  }
+
+  /**
+   * Delete a user profile
+   */
+  async deleteUserProfile(userId: string): Promise<void> {
+    await apiClient.getClient()!.delete(`/api/flash/user-profile/${userId}`);
+  }
+
+  /**
+   * List all user profiles
+   */
+  async listUserProfiles(): Promise<UserProfile[]> {
+    const response = await apiClient.getClient()!.get('/api/flash/user-profiles');
     return response.data;
   }
 
@@ -167,6 +195,65 @@ export class FlashAPI {
    */
   async testConnection(): Promise<boolean> {
     return await apiClient.testConnection();
+  }
+
+  // Authentication Methods
+
+  /**
+   * Login user
+   */
+  async login(credentials: LoginRequest): Promise<AuthSession> {
+    const response = await apiClient.getClient()!.post('/api/auth/login', credentials);
+    const authSession = response.data;
+    
+    // Update API client with new auth token
+    await apiClient.setAuthToken(authSession.access_token);
+    
+    return authSession;
+  }
+
+  /**
+   * Register new user
+   */
+  async register(credentials: RegisterRequest): Promise<AuthSession> {
+    const response = await apiClient.getClient()!.post('/api/auth/register', credentials);
+    const authSession = response.data;
+    
+    // Update API client with new auth token
+    await apiClient.setAuthToken(authSession.access_token);
+    
+    return authSession;
+  }
+
+  /**
+   * Logout user
+   */
+  async logout(): Promise<void> {
+    await apiClient.getClient()!.post('/api/auth/logout');
+    
+    // Clear auth token from API client
+    await apiClient.clearAuthToken();
+  }
+
+  /**
+   * Get current authenticated user
+   */
+  async getCurrentUser(): Promise<AuthUser> {
+    const response = await apiClient.getClient()!.get('/api/auth/me');
+    return response.data;
+  }
+
+  /**
+   * Refresh authentication token
+   */
+  async refreshToken(request: RefreshTokenRequest): Promise<{ access_token: string; expires_at: string }> {
+    const response = await apiClient.getClient()!.post('/api/auth/refresh', request);
+    const refreshData = response.data;
+    
+    // Update API client with new auth token
+    await apiClient.setAuthToken(refreshData.access_token);
+    
+    return refreshData;
   }
 }
 

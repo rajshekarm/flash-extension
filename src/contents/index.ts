@@ -8,7 +8,7 @@ import { FormDetector } from "~lib/dom/formDetector"
 import { JobExtractor } from "~lib/dom/jobExtractor"
 import { FieldInjector } from "~lib/dom/fieldInjector"
 import { debounce } from "~lib/utils/helpers"
-import { flashSyncStorage, flashStorage } from "~lib/storage/chrome"
+import { flashSyncStorage, flashStorage, getUserProfile, getCurrentAuthUser } from "~lib/storage/chrome"
 import type {
   Answer,
   ExtractedJobInfo,
@@ -157,8 +157,9 @@ async function analyzeJob() {
 
   updateStatus("analyzing job now", true)
   
-  // Get user profile
-  const userProfile = await flashSyncStorage.get("userProfile")
+  // Get authenticated user and their profile
+  const currentUser = await getCurrentAuthUser();
+  const userProfile = currentUser ? await getUserProfile(currentUser.id) : null;
   
   const jobDescription: JobDescription = {
     title: jobInfo.title || "",
@@ -199,7 +200,8 @@ async function  fillApplication() {
     return { success: false, error: "No application form detected" }
   }
 
-  const userProfile = await flashSyncStorage.get("userProfile")
+  const currentUser = await getCurrentAuthUser();
+  const userProfile = currentUser ? await getUserProfile(currentUser.id) : null;
   
  if (!userProfile?.id) {
     return { success: false, error: "User profile not found. Please set up your profile in settings." }
@@ -208,7 +210,6 @@ async function  fillApplication() {
   const currentSession = await flashStorage.get("currentSession")
   const jobId = currentSession?.currentJob?.job_id
 
- 
 
  
   

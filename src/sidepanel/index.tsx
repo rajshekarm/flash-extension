@@ -6,10 +6,17 @@ import { Card } from '~components/Card';
 import { Spinner } from '~components/Spinner';
 import { ConfidenceScore } from '~components/ConfidenceScore';
 import { Input } from '~components/Input';
+import { AuthGuard } from '~components/AuthGuard';
+import { 
+  getUserFriendlyErrorMessage, 
+  getErrorActionSuggestions,
+  parseUserProfileError 
+} from '~lib/utils/userProfileErrors';
+import { getCurrentAuthUser } from '~lib/storage/chrome';
 
 type Step = 'detection' | 'analysis' | 'filling' | 'review';
 
-export default function SidePanel() {
+function MainSidePanelContent() {
   const [currentStep, setCurrentStep] = useState<Step>('detection');
   const [loading, setLoading] = useState(true);
   const [detectingForms, setDetectingForms] = useState(false);
@@ -47,23 +54,49 @@ export default function SidePanel() {
       // Get job info and forms from content script
       const jobResponse = await chrome.tabs.sendMessage(tab.id, { type: 'GET_JOB_INFO' });
       const formsResponse = await chrome.tabs.sendMessage(tab.id, { type: 'GET_FORMS' });
-      const profileResponse = await chrome.runtime.sendMessage({ type: 'GET_USER_PROFILE' });
+      // Get authenticated user and load their profile
+      const currentUser = await getCurrentAuthUser();
+      let userProfileData = null;
+      
+      if (currentUser) {
+        try {
+          const profileResponse = await chrome.runtime.sendMessage({
+            name: 'getUserProfile',
+            body: { userId: currentUser.id }
+          });
+          
+          if (profileResponse?.success) {
+            userProfileData = profileResponse.data;
+          }
+        } catch (error) {
+          console.warn('[Side Panel] Failed to load user profile:', error);
+        }
+      }
 
       console.log('[Side Panel] Job response:', jobResponse);
       console.log('[Side Panel] Forms response:', formsResponse);
-      console.log('[Side Panel] User profile response:', profileResponse);
+      console.log('[Side Panel] User profile data:', userProfileData);
 
       setJobInfo(jobResponse.data);
       setForms(formsResponse.data);
-      if (profileResponse.success) {
-        setUserProfile(profileResponse.data);
+      if (userProfileData) {
+        setUserProfile(userProfileData);
         setProfileForm((prev) => ({
           ...prev,
-          name: profileResponse.data?.name || '',
-          email: profileResponse.data?.email || '',
-          phone: profileResponse.data?.phone || '',
-          skills: (profileResponse.data?.skills || []).join(', '),
+          name: userProfileData?.name || '',
+          email: userProfileData?.email || '',
+          phone: userProfileData?.phone || '',
+          skills: (userProfileData?.skills || []).join(', '),
         }));
+      } else {
+        // If no profile exists, pre-fill with auth user data
+        if (currentUser) {
+          setProfileForm((prev) => ({
+            ...prev,
+            name: currentUser.name || '',
+            email: currentUser.email || '',
+          }));
+        }
       }
     } catch (error) {
       console.error('[Side Panel] Error loading data:', error);
@@ -80,13 +113,17 @@ export default function SidePanel() {
 
     setSavingProfile(true);
     try {
-      const profileId = userProfile?.id || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`);
-      const payload = {
-        ...userProfile,
-        id: profileId,
+      const currentUser = await getCurrentAuthUser();
+      if (!currentUser) {
+        alert('Authentication required. Please log in again.');
+        return;
+      }
+
+      const profileData = {
+        id: userProfile?.id || currentUser.id, // Use current user ID if no profile exists
         name: profileForm.name,
         email: profileForm.email,
-        phone: profileForm.phone,
+        phone: profileForm.phone || undefined,
         skills: profileForm.skills
           .split(',')
           .map((skill) => skill.trim())
@@ -95,10 +132,20 @@ export default function SidePanel() {
         education: userProfile?.education || [],
       };
 
-      const response = await chrome.runtime.sendMessage({
-        type: 'UPDATE_USER_PROFILE',
-        payload,
-      });
+      let response;
+      if (userProfile?.id) {
+        // Update existing profile
+        response = await chrome.runtime.sendMessage({
+          name: 'updateUserProfile',
+          body: { userId: userProfile.id, profile: profileData }
+        });
+      } else {
+        // Create new profile for authenticated user
+        response = await chrome.runtime.sendMessage({
+          name: 'createUserProfile',
+          body: { profile: profileData }
+        });
+      }
 
       if (response.success) {
         setUserProfile(response.data);
@@ -119,13 +166,81 @@ export default function SidePanel() {
               : fallbackSkills || prev.skills,
           };
         });
-        alert('Profile saved successfully.');
+        
+        const message = userProfile?.id 
+          ? `Profile updated successfully${response.warning ? `\n\n⚠️ ${response.warning}` : ''}`
+          : `Profile created successfully${response.warning ? `\n\n⚠️ ${response.warning}` : ''}`;
+        alert(message);
       } else {
-        alert(`Failed to save profile:\n\n${response.error || 'Unknown error'}`);
+        const profileError = parseUserProfileError({ 
+          message: response.error, 
+          errorType: response.errorType 
+        });
+        const friendlyMessage = getUserFriendlyErrorMessage(profileError);
+        const suggestions = getErrorActionSuggestions(profileError);
+        
+        alert(`${friendlyMessage}\n\nSuggestions:\n• ${suggestions.join('\n• ')}`);
       }
     } catch (error) {
       console.error('[Side Panel] Error saving profile:', error);
-      alert(`Error saving profile:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      const profileError = parseUserProfileError(error);
+      const friendlyMessage = getUserFriendlyErrorMessage(profileError);
+      const suggestions = getErrorActionSuggestions(profileError);
+      
+      alert(`${friendlyMessage}\n\nSuggestions:\n• ${suggestions.join('\n• ')}`);
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function handleDeleteProfile() {
+    if (!userProfile?.id) {
+      alert('No profile to delete.');
+      return;
+    }
+
+    const confirmed = confirm(`Are you sure you want to delete your profile?\n\nThis action cannot be undone.\n\nProfile: ${userProfile.name} (${userProfile.email})`);
+    if (!confirmed) return;
+
+    setSavingProfile(true);
+    try {
+      const response = await chrome.runtime.sendMessage({
+        name: 'deleteUserProfile',
+        body: { userId: userProfile.id }
+      });
+
+      if (response.success) {
+        setUserProfile(null);
+        setProfileForm({
+          name: '',
+          email: '',
+          phone: '',
+          skills: '',
+        });
+        
+        const message = response.warning 
+          ? `Profile deleted locally.\n\n⚠️ ${response.warning}`
+          : 'Profile deleted successfully.';
+        alert(message);
+      } else {
+        const profileError = parseUserProfileError({ 
+          message: response.error, 
+          errorType: response.errorType 
+        });
+        const friendlyMessage = getUserFriendlyErrorMessage(profileError);
+        const suggestions = getErrorActionSuggestions(profileError);
+        
+        alert(`${friendlyMessage}\n\nSuggestions:\n• ${suggestions.join('\n• ')}`);
+      }
+    } catch (error) {
+      console.error('[Side Panel] Error deleting profile:', error);
+      
+      const profileError = parseUserProfileError(error);
+      const friendlyMessage = getUserFriendlyErrorMessage(profileError);
+      const suggestions = getErrorActionSuggestions(profileError);
+      
+      alert(`${friendlyMessage}\n\nSuggestions:\n• ${suggestions.join('\n• ')}`);
     } finally {
       setSavingProfile(false);
     }
@@ -444,7 +559,7 @@ export default function SidePanel() {
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold mb-2">Your Profile</h3>
                 <span className={`text-xs ${userProfile?.id ? 'text-green-600' : 'text-gray-500'}`}>
-                  {userProfile?.id ? 'Saved to Sync Storage' : 'Required for AI features'}
+                  {userProfile?.id ? 'Linked to your account' : 'Required for AI features'}
                 </span>
               </div>
               <p className="text-sm text-gray-600 mb-3">
@@ -498,9 +613,21 @@ export default function SidePanel() {
                 {userProfile?.id ? 'Update Profile' : 'Save Profile'}
               </Button>
               {userProfile?.id && (
-                <p className="text-xs text-gray-500 mt-2">
-                  Profile ID: {userProfile.id}
-                </p>
+                <>
+                  <div className="flex gap-2 mt-3">
+                    <Button
+                      variant="secondary"
+                      className="flex-1"
+                      onClick={handleDeleteProfile}
+                      loading={savingProfile}
+                    >
+                      Delete Profile
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Profile ID: {userProfile.id}
+                  </p>
+                </>
               )}
             </Card>
 
@@ -715,5 +842,13 @@ export default function SidePanel() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SidePanel() {
+  return (
+    <AuthGuard>
+      <MainSidePanelContent />
+    </AuthGuard>
   );
 }

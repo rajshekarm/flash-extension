@@ -25,11 +25,21 @@ class FlashAPIClient {
   private client: AxiosInstance | null = null;
   private baseURL: string = '';
   private apiKey: string = '';
+  private authToken: string = '';
 
   async initialize() {
     const settings = await getAPISettings();
     this.baseURL = settings.baseURL;
     this.apiKey = settings.apiKey;
+
+    // Try to get auth token from storage
+    try {
+      const authToken = await chrome.storage.local.get(['authToken']);
+      this.authToken = authToken.authToken || '';
+    } catch (error) {
+      console.warn('[API Client] Failed to get auth token:', error);
+      this.authToken = '';
+    }
 
     this.client = axios.create({
       baseURL: this.baseURL,
@@ -39,10 +49,13 @@ class FlashAPIClient {
       },
     });
 
-    // Request interceptor - add auth
+    // Request interceptor - add auth headers
     this.client.interceptors.request.use(
       (config) => {
-        if (this.apiKey) {
+        // Prioritize JWT token over API key
+        if (this.authToken) {
+          config.headers.Authorization = `Bearer ${this.authToken}`;
+        } else if (this.apiKey) {
           config.headers.Authorization = `Bearer ${this.apiKey}`;
         }
         return config;
@@ -50,11 +63,29 @@ class FlashAPIClient {
       (error) => Promise.reject(error)
     );
 
-    // Response interceptor - handle errors
+    // Response interceptor - handle errors and token refresh
     this.client.interceptors.response.use(
       (response) => response,
-      (error: AxiosError) => {
+      async (error: AxiosError) => {
         if (error.response) {
+          // Handle 401 Unauthorized - try token refresh
+          if (error.response.status === 401 && this.authToken) {
+            console.log('[API Client] Token expired, attempting refresh...');
+            try {
+              const refreshResult = await this.refreshAuthToken();
+              if (refreshResult && error.config) {
+                // Retry the original request with new token
+                error.config.headers.Authorization = `Bearer ${this.authToken}`;
+                return axios.request(error.config);
+              }
+            } catch (refreshError) {
+              console.warn('[API Client] Token refresh failed:', refreshError);
+              // Clear invalid tokens
+              this.authToken = '';
+              await chrome.storage.local.remove(['authToken', 'authSession', 'refreshToken']);
+            }
+          }
+          
           // Server responded with error
           throw new FlashAPIError(
             error.response.status,
@@ -70,6 +101,51 @@ class FlashAPIClient {
         }
       }
     );
+  }
+
+  private async refreshAuthToken(): Promise<boolean> {
+    try {
+      const refreshTokenData = await chrome.storage.local.get(['refreshToken']);
+      const refreshToken = refreshTokenData.refreshToken;
+      
+      if (!refreshToken) {
+        return false;
+      }
+
+      const response = await axios.post(`${this.baseURL}/api/auth/refresh`, {
+        refresh_token: refreshToken
+      });
+
+      if (response.data?.access_token) {
+        this.authToken = response.data.access_token;
+        await chrome.storage.local.set({ 
+          authToken: this.authToken,
+          expires_at: response.data.expires_at 
+        });
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('[API Client] Refresh token error:', error);
+      return false;
+    }
+  }
+
+  // Update auth token (called when user logs in)
+  async setAuthToken(token: string) {
+    this.authToken = token;
+    if (this.client) {
+      this.client.defaults.headers.Authorization = `Bearer ${token}`;
+    }
+  }
+
+  // Clear auth token (called when user logs out)
+  async clearAuthToken() {
+    this.authToken = '';
+    if (this.client) {
+      delete this.client.defaults.headers.Authorization;
+    }
   }
 
   private ensureInitialized() {

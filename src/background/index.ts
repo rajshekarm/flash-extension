@@ -2,6 +2,7 @@
 // This is the brain of the extension that coordinates all operations
 
 import { flashStorage, flashSyncStorage } from '~lib/storage/chrome';
+import { flashAPI } from '~lib/api';
 import type { Message, MessageResponse } from '~types';
 
 console.log('[Flash Background] Service worker started');
@@ -181,10 +182,24 @@ async function handleGetState(): Promise<MessageResponse> {
  * Get user profile
  */
 async function handleGetUserProfile(): Promise<MessageResponse> {
-  const profile = await flashSyncStorage.get('userProfile');
+  const localProfile = await flashSyncStorage.get('userProfile');
+
+  if (localProfile?.id) {
+    try {
+      const remoteProfile = await flashAPI.getUserProfile(localProfile.id);
+      await flashSyncStorage.set('userProfile', remoteProfile);
+      return {
+        success: true,
+        data: remoteProfile,
+      };
+    } catch (error) {
+      console.warn('[Flash Background] Failed to fetch profile from backend, using local copy', error);
+    }
+  }
+
   return {
     success: true,
-    data: profile,
+    data: localProfile,
   };
 }
 
@@ -192,11 +207,35 @@ async function handleGetUserProfile(): Promise<MessageResponse> {
  * Update user profile
  */
 async function handleUpdateUserProfile(profile: any): Promise<MessageResponse> {
+  if (!profile) {
+    return {
+      success: false,
+      error: 'Profile data is required'
+    };
+  }
+
   await flashSyncStorage.set('userProfile', profile);
-  return {
-    success: true,
-    data: profile,
-  };
+
+  try {
+    const savedProfile = profile.id
+      ? await flashAPI.updateUserProfile(profile.id, profile)
+      : await flashAPI.createUserProfile(profile);
+
+    await flashSyncStorage.set('userProfile', savedProfile);
+
+    return {
+      success: true,
+      data: savedProfile,
+    };
+  } catch (error) {
+    console.error('[Flash Background] Failed to sync profile with backend:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Profile sync failed';
+    return {
+      success: false,
+      error: errorMessage,
+      data: profile,
+    };
+  }
 }
 
 /**

@@ -7,12 +7,26 @@ export enum MessageType {
   JOB_DETECTED = 'JOB_DETECTED',
   PAGE_ANALYZED = 'PAGE_ANALYZED',
 
+  // Authentication operations
+  LOGIN = 'LOGIN',
+  LOGOUT = 'LOGOUT',
+  REGISTER = 'REGISTER',
+  CHECK_AUTH = 'CHECK_AUTH',
+  REFRESH_TOKEN = 'REFRESH_TOKEN',
+
   // Action requests
   ANALYZE_JOB = 'ANALYZE_JOB',
   TAILOR_RESUME = 'TAILOR_RESUME',
   ANSWER_QUESTION = 'ANSWER_QUESTION',
   FILL_APPLICATION = 'FILL_APPLICATION',
   SUBMIT_APPLICATION = 'SUBMIT_APPLICATION',
+
+  // User Profile CRUD operations
+  CREATE_USER_PROFILE = 'CREATE_USER_PROFILE',
+  GET_USER_PROFILE = 'GET_USER_PROFILE',
+  UPDATE_USER_PROFILE = 'UPDATE_USER_PROFILE',
+  DELETE_USER_PROFILE = 'DELETE_USER_PROFILE',
+  LIST_USER_PROFILES = 'LIST_USER_PROFILES',
 
   // Injection commands
   INJECT_ANSWERS = 'INJECT_ANSWERS',
@@ -33,7 +47,6 @@ export enum MessageType {
 
   // State queries
   GET_STATE = 'GET_STATE',
-  GET_USER_PROFILE = 'GET_USER_PROFILE',
   GET_CURRENT_JOB = 'GET_CURRENT_JOB',
   GET_FORM_STATE = 'GET_FORM_STATE',
   GET_FORMS = 'GET_FORMS',
@@ -46,7 +59,6 @@ export enum MessageType {
   CLEAR_HIGHLIGHTS = 'CLEAR_HIGHLIGHTS',
 
   // State updates
-  UPDATE_USER_PROFILE = 'UPDATE_USER_PROFILE',
   UPDATE_PREFERENCES = 'UPDATE_PREFERENCES',
   CLEAR_SESSION = 'CLEAR_SESSION',
 
@@ -78,6 +90,11 @@ export interface StorageKeys {
   apiSettings: 'apiSettings';
   preferences: 'preferences';
 
+  // Authentication data (local storage)
+  authSession: 'authSession';
+  authToken: 'authToken';
+  refreshToken: 'refreshToken';
+
   // Session data (local storage)
   currentSession: 'currentSession';
   formCache: 'formCache';
@@ -93,6 +110,9 @@ export interface StorageData {
   userProfile?: import('./flash').UserProfile;
   apiSettings?: APISettings;
   preferences?: UserPreferences;
+  authSession?: import('./flash').AuthSession;
+  authToken?: string;
+  refreshToken?: string;
   currentSession?: Session;
   formCache?: FormCache[];
   recentJobs?: RecentJob[];

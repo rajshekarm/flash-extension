@@ -21,10 +21,13 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
     if (!userId) {
       throw new Error('User ID is required');
     }
-
+    
     console.log(`[fillApplication] Processing ${formFields.length} fields`);
 
+    // alert("calling Fast API")
+
     // Call Flash API to fill application
+    console.log("making backend APi calll")
     const result = await flashAPI.fillApplication(formFields, userId, jobId);
 
     // Cache the answers
