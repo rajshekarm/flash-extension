@@ -15,15 +15,21 @@ export class FormDetector {
    */
   detectForms(): FormMetadata | null {
     const forms = document.querySelectorAll('form');
+    console.log("detected forms are", forms)
     if (forms.length === 0) return null;
 
     const detectedForms: DetectedForm[] = [];
 
     forms.forEach((form) => {
       const score = this.scoreForm(form);
-      if (score.score > 0.3) {
-        // Only include forms that likely are application forms
-        const fields = this.extractFields(form);
+      const fields = this.extractFields(form);
+      
+      // Include forms with at least 1 fillable field OR high confidence score
+      // This catches account creation, login, and all application forms
+      // Note: Password fields are excluded for security, so even simple forms qualify
+      const shouldInclude = fields.length >= 1 || score.score > 0.3;
+      
+      if (shouldInclude) {
         detectedForms.push({
           element: form,
           action: form.action,
@@ -315,7 +321,7 @@ export class FormDetector {
     if (field.type === 'hidden') return true;
 
     // Skip password fields (security)
-    if (field.type === 'password') return true;
+    // if (field.type === 'password') return true;
 
     // Skip fields with certain names (CSRF tokens, etc.)
     const skipNames = ['csrf', 'token', '_method', 'authenticity_token'];

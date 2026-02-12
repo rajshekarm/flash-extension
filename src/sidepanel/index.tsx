@@ -5,12 +5,21 @@ import { Button } from '~components/Button';
 import { Card } from '~components/Card';
 import { Spinner } from '~components/Spinner';
 import { ConfidenceScore } from '~components/ConfidenceScore';
+import { Input } from '~components/Input';
+import { AuthGuard } from '~components/AuthGuard';
+import { 
+  getUserFriendlyErrorMessage, 
+  getErrorActionSuggestions,
+  parseUserProfileError 
+} from '~lib/utils/userProfileErrors';
+import { getCurrentAuthUser } from '~lib/storage/chrome';
 
 type Step = 'detection' | 'analysis' | 'filling' | 'review';
 
-export default function SidePanel() {
+function MainSidePanelContent() {
   const [currentStep, setCurrentStep] = useState<Step>('detection');
   const [loading, setLoading] = useState(true);
+  const [detectingForms, setDetectingForms] = useState(false);
   const [jobInfo, setJobInfo] = useState<any>(null);
   const [forms, setForms] = useState<any>(null);
   const [analysis, setAnalysis] = useState<any>(null);
@@ -18,6 +27,10 @@ export default function SidePanel() {
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [injecting, setInjecting] = useState(false);
+  const [filling, setFilling] = useState(false);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [profileForm, setProfileForm] = useState({ name: '', email: '', phone: '', skills: '' });
+  const [savingProfile, setSavingProfile] = useState(false);
 
   useEffect(() => {
     loadInitialData();
@@ -41,16 +54,222 @@ export default function SidePanel() {
       // Get job info and forms from content script
       const jobResponse = await chrome.tabs.sendMessage(tab.id, { type: 'GET_JOB_INFO' });
       const formsResponse = await chrome.tabs.sendMessage(tab.id, { type: 'GET_FORMS' });
+      // Get authenticated user and load their profile
+      const currentUser = await getCurrentAuthUser();
+      let userProfileData = null;
+      
+      if (currentUser) {
+        try {
+          const profileResponse = await chrome.runtime.sendMessage({
+            name: 'getUserProfile',
+            body: { userId: currentUser.id }
+          });
+          
+          if (profileResponse?.success) {
+            userProfileData = profileResponse.data;
+          }
+        } catch (error) {
+          console.warn('[Side Panel] Failed to load user profile:', error);
+        }
+      }
 
       console.log('[Side Panel] Job response:', jobResponse);
       console.log('[Side Panel] Forms response:', formsResponse);
+      console.log('[Side Panel] User profile data:', userProfileData);
 
       setJobInfo(jobResponse.data);
       setForms(formsResponse.data);
+      if (userProfileData) {
+        setUserProfile(userProfileData);
+        setProfileForm((prev) => ({
+          ...prev,
+          name: userProfileData?.name || '',
+          email: userProfileData?.email || '',
+          phone: userProfileData?.phone || '',
+          skills: (userProfileData?.skills || []).join(', '),
+        }));
+      } else {
+        // If no profile exists, pre-fill with auth user data
+        if (currentUser) {
+          setProfileForm((prev) => ({
+            ...prev,
+            name: currentUser.name || '',
+            email: currentUser.email || '',
+          }));
+        }
+      }
     } catch (error) {
       console.error('[Side Panel] Error loading data:', error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSaveProfile() {
+    if (!profileForm.name || !profileForm.email) {
+      alert('Name and email are required to create a profile.');
+      return;
+    }
+
+    setSavingProfile(true);
+    try {
+      const currentUser = await getCurrentAuthUser();
+      if (!currentUser) {
+        alert('Authentication required. Please log in again.');
+        return;
+      }
+
+      const profileData = {
+        id: userProfile?.id || currentUser.id, // Use current user ID if no profile exists
+        name: profileForm.name,
+        email: profileForm.email,
+        phone: profileForm.phone || undefined,
+        skills: profileForm.skills
+          .split(',')
+          .map((skill) => skill.trim())
+          .filter(Boolean),
+        experience: userProfile?.experience || [],
+        education: userProfile?.education || [],
+      };
+
+      let response;
+      if (userProfile?.id) {
+        // Update existing profile
+        response = await chrome.runtime.sendMessage({
+          name: 'updateUserProfile',
+          body: { userId: userProfile.id, profile: profileData }
+        });
+      } else {
+        // Create new profile for authenticated user
+        response = await chrome.runtime.sendMessage({
+          name: 'createUserProfile',
+          body: { profile: profileData }
+        });
+      }
+
+      if (response.success) {
+        setUserProfile(response.data);
+        setProfileForm((prev) => {
+          const fallbackSkills = prev.skills
+            ?.split(',')
+            .map((skill) => skill.trim())
+            .filter(Boolean)
+            .join(', ');
+
+          return {
+            ...prev,
+            name: response.data?.name || prev.name,
+            email: response.data?.email || prev.email,
+            phone: response.data?.phone || prev.phone,
+            skills: response.data?.skills
+              ? response.data.skills.join(', ')
+              : fallbackSkills || prev.skills,
+          };
+        });
+        
+        const message = userProfile?.id 
+          ? `Profile updated successfully${response.warning ? `\n\n⚠️ ${response.warning}` : ''}`
+          : `Profile created successfully${response.warning ? `\n\n⚠️ ${response.warning}` : ''}`;
+        alert(message);
+      } else {
+        const profileError = parseUserProfileError({ 
+          message: response.error, 
+          errorType: response.errorType 
+        });
+        const friendlyMessage = getUserFriendlyErrorMessage(profileError);
+        const suggestions = getErrorActionSuggestions(profileError);
+        
+        alert(`${friendlyMessage}\n\nSuggestions:\n• ${suggestions.join('\n• ')}`);
+      }
+    } catch (error) {
+      console.error('[Side Panel] Error saving profile:', error);
+      
+      const profileError = parseUserProfileError(error);
+      const friendlyMessage = getUserFriendlyErrorMessage(profileError);
+      const suggestions = getErrorActionSuggestions(profileError);
+      
+      alert(`${friendlyMessage}\n\nSuggestions:\n• ${suggestions.join('\n• ')}`);
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function handleDeleteProfile() {
+    if (!userProfile?.id) {
+      alert('No profile to delete.');
+      return;
+    }
+
+    const confirmed = confirm(`Are you sure you want to delete your profile?\n\nThis action cannot be undone.\n\nProfile: ${userProfile.name} (${userProfile.email})`);
+    if (!confirmed) return;
+
+    setSavingProfile(true);
+    try {
+      const response = await chrome.runtime.sendMessage({
+        name: 'deleteUserProfile',
+        body: { userId: userProfile.id }
+      });
+
+      if (response.success) {
+        setUserProfile(null);
+        setProfileForm({
+          name: '',
+          email: '',
+          phone: '',
+          skills: '',
+        });
+        
+        const message = response.warning 
+          ? `Profile deleted locally.\n\n⚠️ ${response.warning}`
+          : 'Profile deleted successfully.';
+        alert(message);
+      } else {
+        const profileError = parseUserProfileError({ 
+          message: response.error, 
+          errorType: response.errorType 
+        });
+        const friendlyMessage = getUserFriendlyErrorMessage(profileError);
+        const suggestions = getErrorActionSuggestions(profileError);
+        
+        alert(`${friendlyMessage}\n\nSuggestions:\n• ${suggestions.join('\n• ')}`);
+      }
+    } catch (error) {
+      console.error('[Side Panel] Error deleting profile:', error);
+      
+      const profileError = parseUserProfileError(error);
+      const friendlyMessage = getUserFriendlyErrorMessage(profileError);
+      const suggestions = getErrorActionSuggestions(profileError);
+      
+      alert(`${friendlyMessage}\n\nSuggestions:\n• ${suggestions.join('\n• ')}`);
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function handleDetectForms() {
+    setDetectingForms(true);
+    try {
+      const window = await chrome.windows.getCurrent();
+      const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
+      if (!tab?.id) {
+        alert('❌ Could not find the active tab');
+        return;
+      }
+
+      console.log('[Side Panel] Requesting form detection');
+      const response = await chrome.tabs.sendMessage(tab.id, { type: 'DETECT_FORMS' });
+
+      if (response.success) {
+        setForms(response.data);
+        setCurrentStep('detection');
+      } else {
+        alert(`❌ Failed to detect forms:\n\n${response.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('[Side Panel] Error detecting forms:', error);
+      alert(`❌ Error detecting forms:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setDetectingForms(false);
     }
   }
 
@@ -78,6 +297,62 @@ export default function SidePanel() {
     }
   }
 
+  async function handleFillApplication() {
+    if (!forms?.forms?.length) {
+      alert('❌ No forms detected. Please navigate to a job application page.');
+      return;
+    }
+
+    setFilling(true);
+    try {
+      const window = await chrome.windows.getCurrent();
+      const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
+      if (!tab?.id) {
+        alert('❌ Could not find active tab');
+        return;
+      }
+
+      console.log('[Side Panel] Fill All Fields - Starting...');
+
+      // Step 1: Generate answers
+      const fillResponse = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+      
+      if (!fillResponse.success) {
+        alert(`❌ Failed to generate answers:\n\n${fillResponse.error}`);
+        return;
+      }
+
+      const answers = fillResponse.data?.answers || [];
+      console.log(`[Side Panel] Generated ${answers.length} answers`);
+
+      if (answers.length === 0) {
+        alert('⚠️ No answers generated. Please ensure:\n• Form fields are detected\n• User profile is set up\n• Backend API is running');
+        return;
+      }
+
+      // Step 2: Inject answers immediately
+      const injectResponse = await chrome.tabs.sendMessage(tab.id, { 
+        type: 'INJECT_ANSWERS',
+        payload: { answers }
+      });
+
+      if (injectResponse.success) {
+        const result = injectResponse.data;
+        setAnswers(answers);
+        setCurrentStep('review');
+        alert(`✅ Form filled successfully!\n\n📊 Results:\n• Filled: ${result.filled} fields\n• Skipped: ${result.skipped}\n• Failed: ${result.failed}\n\n⚠️ Please review the form before submitting.`);
+      } else {
+        alert(`❌ Failed to fill form:\n\n${injectResponse.error}`);
+      }
+
+    } catch (error) {
+      console.error('[Side Panel] Error filling application:', error);
+      alert(`❌ Error:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setFilling(false);
+    }
+  }
+
   async function handleGenerateAnswers() {
     setGenerating(true);
     try {
@@ -85,17 +360,47 @@ export default function SidePanel() {
       const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
       if (!tab?.id) return;
 
-      const response = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+      console.log('[Sidepanel] Fill All Fields - Starting...');
       
-      if (response.success) {
-        setAnswers(response.data.answers || []);
-        setCurrentStep('filling');
-      } else {
-        alert(`Failed to generate answers: ${response.error}`);
+      // Step 1: Generate answers
+      const fillResponse = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+      
+      if (!fillResponse.success) {
+        const errorMsg = fillResponse.error || 'Unknown error occurred';
+        alert(`❌ Failed to generate answers:\n\n${errorMsg}\n\nTroubleshooting:\n• Ensure backend API is running\n• Check user profile is configured\n• Check browser console for details`);
+        return;
       }
+
+      const answers = fillResponse.data?.answers || [];
+      console.log(`[Sidepanel] Generated ${answers.length} answers`);
+      
+      if (answers.length === 0) {
+        alert('⚠️ No answers generated. Please ensure:\n• Form fields are detected\n• User profile is set up\n• Backend API is running');
+        return;
+      }
+
+      setAnswers(answers);
+
+      // Step 2: Immediately inject answers
+      const injectResponse = await chrome.tabs.sendMessage(tab.id, { 
+        type: 'INJECT_ANSWERS',
+        payload: { answers }
+      });
+
+      if (injectResponse.success && injectResponse.data) {
+        const result = injectResponse.data;
+        console.log('[Sidepanel] Injection result:', result);
+        setCurrentStep('review');
+        alert(`✅ Form filled successfully!\n\n📊 Results:\n• Filled: ${result.filled}\n• Skipped: ${result.skipped}\n• Failed: ${result.failed}\n\n⚠️ Please review the form before submitting.`);
+      } else {
+        // Keep answers visible even if injection fails
+        setCurrentStep('filling');
+        alert(`❌ Failed to inject answers:\n\n${injectResponse.error || 'Unknown error'}\n\nAnswers are still available for manual review.`);
+      }
+
     } catch (error) {
-      alert('Error generating answers');
-      console.error(error);
+      console.error('[Sidepanel] Error:', error);
+      alert(`❌ Error:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setGenerating(false);
     }
@@ -108,20 +413,23 @@ export default function SidePanel() {
       const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
       if (!tab?.id) return;
 
+      console.log(`[Sidepanel] Injecting ${answers.length} answers into form`);
       const response = await chrome.tabs.sendMessage(tab.id, { 
         type: 'INJECT_ANSWERS',
         payload: { answers }
       });
       
       if (response.success) {
+        const result = response.data;
+        console.log('[Sidepanel] Injection result:', result);
         setCurrentStep('review');
-        alert('Answers injected! Please review the form before submitting.');
+        alert(`✅ Answers injected successfully!\n\n📊 Results:\n• Filled: ${result.filled}\n• Skipped: ${result.skipped}\n• Failed: ${result.failed}\n\n⚠️ Please review the form before submitting.`);
       } else {
-        alert(`Failed to inject: ${response.error}`);
+        alert(`❌ Failed to inject answers:\n\n${response.error}`);
       }
     } catch (error) {
-      alert('Error injecting answers');
-      console.error(error);
+      console.error('[Sidepanel] Error injecting answers:', error);
+      alert(`❌ Error injecting answers:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setInjecting(false);
     }
@@ -248,15 +556,127 @@ export default function SidePanel() {
             </Card>
 
             <Card>
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold mb-2">Your Profile</h3>
+                <span className={`text-xs ${userProfile?.id ? 'text-green-600' : 'text-gray-500'}`}>
+                  {userProfile?.id ? 'Linked to your account' : 'Required for AI features'}
+                </span>
+              </div>
+              <p className="text-sm text-gray-600 mb-3">
+                Create or update your profile so Flash can personalize applications and know which user ID to call APIs with.
+              </p>
+              <div className="space-y-3">
+                <Input
+                  label="Full Name"
+                  value={profileForm.name}
+                  onChange={(event) =>
+                    setProfileForm((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                  placeholder="Alex Johnson"
+                  required
+                />
+                <Input
+                  label="Email"
+                  type="email"
+                  value={profileForm.email}
+                  onChange={(event) =>
+                    setProfileForm((prev) => ({ ...prev, email: event.target.value }))
+                  }
+                  placeholder="name@example.com"
+                  required
+                />
+                <Input
+                  label="Phone"
+                  type="tel"
+                  value={profileForm.phone}
+                  onChange={(event) =>
+                    setProfileForm((prev) => ({ ...prev, phone: event.target.value }))
+                  }
+                  placeholder="(123) 456-7890"
+                />
+                <Input
+                  label="Skills (comma separated)"
+                  value={profileForm.skills}
+                  onChange={(event) =>
+                    setProfileForm((prev) => ({ ...prev, skills: event.target.value }))
+                  }
+                  placeholder="JavaScript, Python, SQL"
+                  helperText="Used for resume tailoring and answer generation"
+                />
+              </div>
               <Button
                 variant="primary"
-                className="w-full"
-                onClick={handleAnalyzeJob}
-                loading={analyzing}
-                disabled={!jobInfo || analyzing}
+                className="w-full mt-3"
+                onClick={handleSaveProfile}
+                loading={savingProfile}
               >
-                {analyzing ? 'Analyzing...' : '📊 Analyze Job Match'}
+                {userProfile?.id ? 'Update Profile' : 'Save Profile'}
               </Button>
+              {userProfile?.id && (
+                <>
+                  <div className="flex gap-2 mt-3">
+                    <Button
+                      variant="secondary"
+                      className="flex-1"
+                      onClick={handleDeleteProfile}
+                      loading={savingProfile}
+                    >
+                      Delete Profile
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Profile ID: {userProfile.id}
+                  </p>
+                </>
+              )}
+            </Card>
+
+            <Card>
+              <h3 className="font-semibold mb-3">Quick Actions</h3>
+              <div className="space-y-3">
+                {/* Primary Action - Fill Form */}
+                <Button
+                  variant="primary"
+                  className="w-full"
+                  onClick={handleFillApplication}
+                  loading={filling}
+                  disabled={!forms?.forms?.length || filling}
+                >
+                  {filling ? 'Filling...' : '⚡ Fill All Fields Now'}
+                </Button>
+                <p className="text-xs text-gray-500 text-center -mt-1">
+                  One-click form filling with AI-generated answers
+                </p>
+
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  onClick={handleDetectForms}
+                  loading={detectingForms}
+                  disabled={detectingForms}
+                >
+                  {detectingForms ? 'Scanning forms...' : '🔄 Re-scan Forms'}
+                </Button>
+                <p className="text-xs text-gray-500 text-center -mt-1">
+                  Refresh the DOM scan if you navigated to a new application form.
+                </p>
+
+                {/* Optional - Analyze Job */}
+                <details className="mt-3">
+                  <summary className="text-sm text-gray-600 cursor-pointer hover:text-gray-900">
+                    Optional: Analyze job match first
+                  </summary>
+                  <Button
+                    variant="secondary"
+                    className="w-full mt-2"
+                    onClick={handleAnalyzeJob}
+                    loading={analyzing}
+                    disabled={!jobInfo || analyzing}
+                  >
+                    {analyzing ? 'Analyzing...' : '📊 Analyze Job Match'}
+                  </Button>
+                </details>
+              </div>
             </Card>
           </>
         )}
@@ -290,8 +710,11 @@ export default function SidePanel() {
                     loading={generating}
                     disabled={!forms?.forms?.length || generating}
                   >
-                    {generating ? 'Generating...' : '✍️ Generate Application Answers'}
+                    {generating ? 'Filling Form...' : '⚡ Fill All Fields Now'}
                   </Button>
+                  <p className="text-xs text-gray-500 mt-2 text-center">
+                    Generates answers and fills form in one click
+                  </p>
                 </Card>
               </>
             ) : (
@@ -314,16 +737,26 @@ export default function SidePanel() {
               <>
                 <Card>
                   <h3 className="font-semibold mb-4">Generated Answers ({answers.length})</h3>
+                  <p className="text-sm text-gray-600 mb-3">
+                    ⚠️ Answers generated but injection may have failed. Review below:
+                  </p>
                   <div className="space-y-3 max-h-96 overflow-y-auto">
                     {answers.map((answer: any, idx: number) => (
                       <div key={idx} className="p-3 bg-gray-50 rounded-lg border border-gray-200">
                         <p className="text-sm font-medium text-gray-900 mb-1">
-                          {answer.field_label || `Field ${idx + 1}`}
+                          {answer.question || answer.field_label || `Field ${idx + 1}`}
                         </p>
-                        <p className="text-sm text-gray-700">{answer.answer}</p>
-                        {answer.confidence && (
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">{answer.answer}</p>
+                        {answer.confidence !== undefined && (
                           <div className="mt-2">
                             <ConfidenceScore score={answer.confidence} size="sm" />
+                          </div>
+                        )}
+                        {answer.sources && answer.sources.length > 0 && (
+                          <div className="mt-1">
+                            <p className="text-xs text-gray-500">
+                              📚 Sources: {answer.sources.join(', ')}
+                            </p>
                           </div>
                         )}
                       </div>
@@ -339,19 +772,19 @@ export default function SidePanel() {
                     loading={injecting}
                     disabled={injecting}
                   >
-                    {injecting ? 'Injecting...' : '💉 Inject Answers to Form'}
+                    {injecting ? 'Injecting...' : '💉 Retry Injection'}
                   </Button>
                   <p className="text-xs text-gray-500 mt-2 text-center">
-                    Review answers before injecting
+                    Manually retry filling the form
                   </p>
                 </Card>
               </>
             ) : (
               <Card>
                 <div className="text-center py-8">
-                  <p className="text-gray-600 mb-4">No answers generated yet</p>
-                  <Button variant="primary" onClick={handleGenerateAnswers} loading={generating}>
-                    Generate Answers Now
+                  <p className="text-gray-600 mb-4">No answers available</p>
+                  <Button variant="primary" onClick={() => setCurrentStep('analysis')}>
+                    Go Back
                   </Button>
                 </div>
               </Card>
@@ -409,5 +842,13 @@ export default function SidePanel() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SidePanel() {
+  return (
+    <AuthGuard>
+      <MainSidePanelContent />
+    </AuthGuard>
   );
 }

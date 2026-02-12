@@ -207,3 +207,80 @@ export interface FlashError {
   statusCode?: number;
   data?: any;
 }
+
+// Authentication Types
+
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+export interface RegisterCredentials extends LoginCredentials {
+  name: string;
+  confirmPassword: string;
+}
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface AuthSession {
+  user: AuthUser;
+  access_token: string;
+  refresh_token?: string;
+  expires_at: string;
+  token_type: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  success: boolean;
+  data?: AuthSession;
+  error?: string;
+}
+
+export interface RegisterRequest {
+  name: string;
+  email: string;
+  password: string;
+}
+
+export interface RegisterResponse {
+  success: boolean;
+  data?: AuthSession;
+  error?: string;
+}
+
+export interface LogoutResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+export interface RefreshTokenRequest {
+  refresh_token: string;
+}
+
+export interface RefreshTokenResponse {
+  success: boolean;
+  data?: {
+    access_token: string;
+    expires_at: string;
+  };
+  error?: string;
+}
+
+export interface AuthCheckResponse {
+  success: boolean;
+  data?: AuthUser;
+  authenticated: boolean;
+  error?: string;
+}
