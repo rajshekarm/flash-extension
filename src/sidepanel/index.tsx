@@ -5,6 +5,7 @@ import { Button } from '~components/Button';
 import { Card } from '~components/Card';
 import { Spinner } from '~components/Spinner';
 import { ConfidenceScore } from '~components/ConfidenceScore';
+import { Input } from '~components/Input';
 
 type Step = 'detection' | 'analysis' | 'filling' | 'review';
 
@@ -20,6 +21,9 @@ export default function SidePanel() {
   const [generating, setGenerating] = useState(false);
   const [injecting, setInjecting] = useState(false);
   const [filling, setFilling] = useState(false);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [profileForm, setProfileForm] = useState({ name: '', email: '', phone: '', skills: '' });
+  const [savingProfile, setSavingProfile] = useState(false);
 
   useEffect(() => {
     loadInitialData();
@@ -43,16 +47,87 @@ export default function SidePanel() {
       // Get job info and forms from content script
       const jobResponse = await chrome.tabs.sendMessage(tab.id, { type: 'GET_JOB_INFO' });
       const formsResponse = await chrome.tabs.sendMessage(tab.id, { type: 'GET_FORMS' });
+      const profileResponse = await chrome.runtime.sendMessage({ type: 'GET_USER_PROFILE' });
 
       console.log('[Side Panel] Job response:', jobResponse);
       console.log('[Side Panel] Forms response:', formsResponse);
+      console.log('[Side Panel] User profile response:', profileResponse);
 
       setJobInfo(jobResponse.data);
       setForms(formsResponse.data);
+      if (profileResponse.success) {
+        setUserProfile(profileResponse.data);
+        setProfileForm((prev) => ({
+          ...prev,
+          name: profileResponse.data?.name || '',
+          email: profileResponse.data?.email || '',
+          phone: profileResponse.data?.phone || '',
+          skills: (profileResponse.data?.skills || []).join(', '),
+        }));
+      }
     } catch (error) {
       console.error('[Side Panel] Error loading data:', error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSaveProfile() {
+    if (!profileForm.name || !profileForm.email) {
+      alert('Name and email are required to create a profile.');
+      return;
+    }
+
+    setSavingProfile(true);
+    try {
+      const profileId = userProfile?.id || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`);
+      const payload = {
+        ...userProfile,
+        id: profileId,
+        name: profileForm.name,
+        email: profileForm.email,
+        phone: profileForm.phone,
+        skills: profileForm.skills
+          .split(',')
+          .map((skill) => skill.trim())
+          .filter(Boolean),
+        experience: userProfile?.experience || [],
+        education: userProfile?.education || [],
+      };
+
+      const response = await chrome.runtime.sendMessage({
+        type: 'UPDATE_USER_PROFILE',
+        payload,
+      });
+
+      if (response.success) {
+        setUserProfile(response.data);
+        setProfileForm((prev) => {
+          const fallbackSkills = prev.skills
+            ?.split(',')
+            .map((skill) => skill.trim())
+            .filter(Boolean)
+            .join(', ');
+
+          return {
+            ...prev,
+            name: response.data?.name || prev.name,
+            email: response.data?.email || prev.email,
+            phone: response.data?.phone || prev.phone,
+            skills: response.data?.skills
+              ? response.data.skills.join(', ')
+              : fallbackSkills || prev.skills,
+          };
+        });
+        alert('Profile saved successfully.');
+      } else {
+        alert(`Failed to save profile:\n\n${response.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('[Side Panel] Error saving profile:', error);
+      alert(`Error saving profile:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setSavingProfile(false);
     }
   }
 
@@ -362,6 +437,70 @@ export default function SidePanel() {
                 <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg text-center">
                   <p className="text-gray-600">No application forms detected</p>
                 </div>
+              )}
+            </Card>
+
+            <Card>
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold mb-2">Your Profile</h3>
+                <span className={`text-xs ${userProfile?.id ? 'text-green-600' : 'text-gray-500'}`}>
+                  {userProfile?.id ? 'Saved to Sync Storage' : 'Required for AI features'}
+                </span>
+              </div>
+              <p className="text-sm text-gray-600 mb-3">
+                Create or update your profile so Flash can personalize applications and know which user ID to call APIs with.
+              </p>
+              <div className="space-y-3">
+                <Input
+                  label="Full Name"
+                  value={profileForm.name}
+                  onChange={(event) =>
+                    setProfileForm((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                  placeholder="Alex Johnson"
+                  required
+                />
+                <Input
+                  label="Email"
+                  type="email"
+                  value={profileForm.email}
+                  onChange={(event) =>
+                    setProfileForm((prev) => ({ ...prev, email: event.target.value }))
+                  }
+                  placeholder="name@example.com"
+                  required
+                />
+                <Input
+                  label="Phone"
+                  type="tel"
+                  value={profileForm.phone}
+                  onChange={(event) =>
+                    setProfileForm((prev) => ({ ...prev, phone: event.target.value }))
+                  }
+                  placeholder="(123) 456-7890"
+                />
+                <Input
+                  label="Skills (comma separated)"
+                  value={profileForm.skills}
+                  onChange={(event) =>
+                    setProfileForm((prev) => ({ ...prev, skills: event.target.value }))
+                  }
+                  placeholder="JavaScript, Python, SQL"
+                  helperText="Used for resume tailoring and answer generation"
+                />
+              </div>
+              <Button
+                variant="primary"
+                className="w-full mt-3"
+                onClick={handleSaveProfile}
+                loading={savingProfile}
+              >
+                {userProfile?.id ? 'Update Profile' : 'Save Profile'}
+              </Button>
+              {userProfile?.id && (
+                <p className="text-xs text-gray-500 mt-2">
+                  Profile ID: {userProfile.id}
+                </p>
               )}
             </Card>
 
