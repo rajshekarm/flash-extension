@@ -58,17 +58,22 @@ export default function Popup() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) return;
 
+      console.log('[Popup] Sending ANALYZE_JOB message to tab', tab.id);
       const response = await chrome.tabs.sendMessage(tab.id, { type: 'ANALYZE_JOB' });
+      
+      console.log('[Popup] Received response:', response);
       
       if (response.success) {
         // Immediately open sidepanel instead of showing alert
         chrome.sidePanel.open({ windowId: tab.windowId });
       } else {
-        alert(`Failed to analyze job: ${response.error}`);
+        // Show more detailed error message
+        const errorMsg = response.error || 'Unknown error occurred';
+        alert(`❌ Failed to analyze job:\n\n${errorMsg}\n\nTroubleshooting:\n• Ensure backend API is running at ${process.env.PLASMO_PUBLIC_API_URL || 'http://localhost:8000'}\n• Check browser console for details`);
       }
     } catch (error) {
-      alert('Error analyzing job');
-      console.error(error);
+      console.error('[Popup] Error analyzing job:', error);
+      alert(`❌ Error analyzing job:\n\n${error instanceof Error ? error.message : 'Unknown error'}\n\nCheck browser console for more details.`);
     } finally {
       setAnalyzing(false);
     }

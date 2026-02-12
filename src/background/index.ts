@@ -39,12 +39,23 @@ chrome.runtime.onStartup.addListener(async () => {
 });
 
 // Handle messages from popup, content scripts, and sidepanel
+// NOTE: This only handles non-Plasmo messages. Plasmo messages (with 'name' field) 
+// are automatically routed to handlers in background/messages/
 chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
+  // Ignore Plasmo messages - they have 'name' instead of 'type'
+  // Plasmo's @plasmohq/messaging handles those automatically
+  if ('name' in message && !('type' in message)) {
+    // This is a Plasmo message, let Plasmo handle it
+    console.log('[Flash Background] Plasmo message detected, skipping manual handler:', message);
+    return false; // Let Plasmo's handler process it
+  }
+
   console.log('[Flash Background] Received message:', message.type, sender.tab?.id);
 
   // Handle message asynchronously
   handleMessage(message, sender)
     .then((response) => {
+      console.log("intermediate response", response)
       sendResponse(response);
     })
     .catch((error) => {
