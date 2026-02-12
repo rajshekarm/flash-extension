@@ -191,7 +191,7 @@ async function analyzeJob() {
   }
 }
 
-async function fillApplication() {
+async function  fillApplication() {
   console.log("[Flash Content] fillApplication called")
   
   const forms = latestForms ?? detectForms()
@@ -200,13 +200,17 @@ async function fillApplication() {
   }
 
   const userProfile = await flashSyncStorage.get("userProfile")
-  if (!userProfile?.id) {
+  
+ if (!userProfile?.id) {
     return { success: false, error: "User profile not found. Please set up your profile in settings." }
   }
-
   // Get current session to retrieve job_id from analysis
   const currentSession = await flashStorage.get("currentSession")
   const jobId = currentSession?.currentJob?.job_id
+
+ 
+
+ 
   
   console.log("[Flash Content] Session jobId:", jobId)
 

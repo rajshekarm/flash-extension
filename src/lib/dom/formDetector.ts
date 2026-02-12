@@ -15,6 +15,7 @@ export class FormDetector {
    */
   detectForms(): FormMetadata | null {
     const forms = document.querySelectorAll('form');
+    console.log("detected forms are", forms)
     if (forms.length === 0) return null;
 
     const detectedForms: DetectedForm[] = [];
@@ -320,7 +321,7 @@ export class FormDetector {
     if (field.type === 'hidden') return true;
 
     // Skip password fields (security)
-    if (field.type === 'password') return true;
+    // if (field.type === 'password') return true;
 
     // Skip fields with certain names (CSRF tokens, etc.)
     const skipNames = ['csrf', 'token', '_method', 'authenticity_token'];

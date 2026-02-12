@@ -58,12 +58,25 @@ export class FlashAPI {
   /**
    * Fill entire application form
    */
+  // async fillApplication(
+  //   formFields: FormField[],
+  //   userId: string,
+  //   jobId?: string
+  // ): Promise<{ answers: Answer[]; overall_confidence: number }> {
+  //   const response = await apiClient.getClient()!.post('/api/flash/fill-application', {
+  //     form_fields: formFields,
+  //     user_id: userId,
+  //     job_id: jobId,
+  //   });
+  //   return response.data;
+  // }
+
   async fillApplication(
     formFields: FormField[],
     userId: string,
     jobId?: string
   ): Promise<{ answers: Answer[]; overall_confidence: number }> {
-    const response = await apiClient.getClient()!.post('/api/flash/fill-application', {
+    const response = await apiClient.getClient()!.post('/api/flash/fill-application-form', {
       form_fields: formFields,
       user_id: userId,
       job_id: jobId,

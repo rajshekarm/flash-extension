@@ -11,6 +11,7 @@ type Step = 'detection' | 'analysis' | 'filling' | 'review';
 export default function SidePanel() {
   const [currentStep, setCurrentStep] = useState<Step>('detection');
   const [loading, setLoading] = useState(true);
+  const [detectingForms, setDetectingForms] = useState(false);
   const [jobInfo, setJobInfo] = useState<any>(null);
   const [forms, setForms] = useState<any>(null);
   const [analysis, setAnalysis] = useState<any>(null);
@@ -52,6 +53,33 @@ export default function SidePanel() {
       console.error('[Side Panel] Error loading data:', error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleDetectForms() {
+    setDetectingForms(true);
+    try {
+      const window = await chrome.windows.getCurrent();
+      const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
+      if (!tab?.id) {
+        alert('❌ Could not find the active tab');
+        return;
+      }
+
+      console.log('[Side Panel] Requesting form detection');
+      const response = await chrome.tabs.sendMessage(tab.id, { type: 'DETECT_FORMS' });
+
+      if (response.success) {
+        setForms(response.data);
+        setCurrentStep('detection');
+      } else {
+        alert(`❌ Failed to detect forms:\n\n${response.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('[Side Panel] Error detecting forms:', error);
+      alert(`❌ Error detecting forms:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setDetectingForms(false);
     }
   }
 
@@ -352,6 +380,19 @@ export default function SidePanel() {
                 </Button>
                 <p className="text-xs text-gray-500 text-center -mt-1">
                   One-click form filling with AI-generated answers
+                </p>
+
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  onClick={handleDetectForms}
+                  loading={detectingForms}
+                  disabled={detectingForms}
+                >
+                  {detectingForms ? 'Scanning forms...' : '🔄 Re-scan Forms'}
+                </Button>
+                <p className="text-xs text-gray-500 text-center -mt-1">
+                  Refresh the DOM scan if you navigated to a new application form.
                 </p>
 
                 {/* Optional - Analyze Job */}
