@@ -112,6 +112,7 @@ export interface ApplicationData {
 
 export interface FormField {
   id: string;
+  name?: string;
   label: string;
   type: 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'file' | 'date';
   required: boolean;
@@ -119,6 +120,7 @@ export interface FormField {
   options?: string[];
   value?: string;
   validation?: string;
+  validation_rules?: Record<string, any> | null;
 }
 
 export interface ConfidenceScore {
@@ -166,7 +168,7 @@ export interface AnswerQuestionResponse {
 export interface FillApplicationRequest {
   form_fields: FormField[];
   user_id: string;
-  job_id?: string;
+  job_id: string;
 }
 
 export interface FillApplicationResponse {

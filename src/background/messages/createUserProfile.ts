@@ -29,9 +29,24 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
 
     // Make sure API client has auth token
     const authToken = await flashStorage.get('authToken');
+    console.log('[createUserProfile] Retrieved authToken:', {
+      hasToken: !!authToken,
+      tokenType: typeof authToken,
+      tokenLength: authToken ? authToken.length : 0,
+      tokenPrefix: authToken ? authToken.substring(0, 20) + '...' : 'null',
+      tokenValue: authToken // Full token for debugging
+    });
+    
     if (authToken) {
       console.log('[createUserProfile] Setting auth token in API client');
       await apiClient.setAuthToken(authToken);
+      
+      // Verify it was set
+      const settings = await apiClient.getSettings();
+      console.log('[createUserProfile] API client settings after setAuthToken:', {
+        hasAuthToken: !!settings.authToken,
+        tokenMatches: settings.authToken === authToken
+      });
     } else {
       console.log('[createUserProfile] No auth token found');
       res.send({ success: false, error: 'Authentication required' });

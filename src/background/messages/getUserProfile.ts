@@ -25,7 +25,7 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
       // Cache in sync storage
       await flashSyncStorage.set('userProfile', profile);
       
-      console.log('[getUserProfile] Profile fetched from backend:', profile.id);
+      console.log('[getUserProfile] Profile fetched from backend:', profile);
       
       res.send({
         success: true,

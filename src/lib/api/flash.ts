@@ -98,10 +98,23 @@ export class FlashAPI {
   async fillApplication(
     formFields: FormField[],
     userId: string,
-    jobId?: string
+    jobId: string
   ): Promise<{ answers: Answer[]; overall_confidence: number }> {
+    console.log("request to fill the application")
+
+    const normalizedFormFields = formFields.map((field) => ({
+      field_id: field.id,
+      field_name: field.name || field.id,
+      field_type: field.type,
+      label: field.label,
+      placeholder: field.placeholder ?? "",
+      required: field.required,
+      options: field.options && field.options.length > 0 ? field.options : [],
+      validation_rules: field.validation_rules ?? (field.validation as any) ?? null,
+    }));
+
     const response = await apiClient.getClient()!.post('/api/flash/fill-application-form', {
-      form_fields: formFields,
+      form_fields: normalizedFormFields,
       user_id: userId,
       job_id: jobId,
     });

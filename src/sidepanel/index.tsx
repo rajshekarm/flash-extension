@@ -391,10 +391,13 @@ function MainSidePanelContent() {
         return;
       }
 
-      console.log('[Side Panel] Fill All Fields - Starting...');
+      // console.log('[Side Panel] Fill All Fields - Starting...');
 
       // Step 1: Generate answers
       const fillResponse = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+
+        console.log('[fillResponse] Fill All Fields - Starting...',fillResponse );
+
       
       if (!fillResponse.success) {
         alert(`❌ Failed to generate answers:\n\n${fillResponse.error}`);

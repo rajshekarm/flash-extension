@@ -203,15 +203,18 @@ async function  fillApplication() {
   const currentUser = await getCurrentAuthUser();
   const userProfile = currentUser ? await getUserProfile(currentUser.id) : null;
   
- if (!userProfile?.id) {
+ if (!userProfile?.user_id) {
     return { success: false, error: "User profile not found. Please set up your profile in settings." }
   }
   // Get current session to retrieve job_id from analysis
   const currentSession = await flashStorage.get("currentSession")
   const jobId = currentSession?.currentJob?.job_id
 
+  if (!jobId) {
+    return { success: false, error: "Job ID not found. Please run job analysis first." }
+  }
 
- 
+  
   
   console.log("[Flash Content] Session jobId:", jobId)
 
@@ -236,23 +239,27 @@ async function  fillApplication() {
 
   const formFields: FormField[] = primaryForm.fields.map((field) => ({
     id: field.id,
+    name: field.name,
     label: field.label,
     type: normalizeFieldType(field.type),
     required: field.required,
     placeholder: field.placeholder,
     options: field.options?.map((opt) => opt.label) || [],
-    value: field.value
+    value: field.value,
+    validation_rules: field.validation || null
   }))
 
   updateStatus("generating answers", true)
+
+  console.log("Generating Answers to the fields")
   
   try {
     const response = await sendToBackground({
       name: "fillApplication",
       body: {
         formFields,
-        userId: userProfile.id,
-        jobId: jobId
+        userId: userProfile.user_id,
+        jobId
       }
     })
     

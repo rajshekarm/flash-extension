@@ -240,6 +240,7 @@ class FlashAPIClient {
       baseURL: this.baseURL,
       hasApiKey: !!this.apiKey,
       hasAuthToken: !!this.authToken,
+      authToken: this.authToken, // Include actual token for debugging
       hasClient: !!this.client
     };
   }

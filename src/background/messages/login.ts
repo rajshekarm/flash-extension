@@ -28,6 +28,14 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
     await flashStorage.set('authSession', authSession);
     await flashStorage.set('authToken', authSession.access_token);
     
+    console.log('[login] Storing token details:', {
+      tokenExists: !!authSession.access_token,
+      tokenType: typeof authSession.access_token,
+      tokenLength: authSession.access_token ? authSession.access_token.length : 0,
+      tokenValue: authSession.access_token,
+      fullAuthSession: authSession
+    });
+    
     if (authSession.refresh_token) {
       await flashStorage.set('refreshToken', authSession.refresh_token);
     }
