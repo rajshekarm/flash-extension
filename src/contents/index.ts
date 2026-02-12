@@ -70,17 +70,19 @@ function updateStatus(message: string, show = true) {
   statusIndicator.textContent = `Flash: ${message}`
   statusIndicator.style.opacity = show ? "1" : "0"
 }
-
+var extract = false;
 function extractJobInfo(): ExtractedJobInfo | null {
   try {
     updateStatus("scanning job", true)
+    
     const jobInfo = jobExtractor.extractJobInfo()
     if (jobInfo?.title || jobInfo?.description) {
       latestJobInfo = jobInfo
       updateStatus("job detected", true)
       
       // Debug output
-      console.log("[Flash Debug] Extracted Job Info:", {
+      if(extract==false){
+console.log("[Flash Debug] Extracted Job Info:", {
         title: jobInfo.title,
         company: jobInfo.company,
         location: jobInfo.location,
@@ -88,6 +90,9 @@ function extractJobInfo(): ExtractedJobInfo | null {
         descriptionLength: jobInfo.description?.length || 0,
         requirementsCount: jobInfo.requirements?.length || 0
       })
+      }
+      
+      extract = true;
       
       return jobInfo
     }
@@ -110,7 +115,7 @@ function detectForms(): FormMetadata | null {
       console.log("[Flash Debug] Detected Forms:", {
         formCount: formData.forms.length,
         forms: formData.forms.map(form => ({
-          confidence: form.confidence,
+          score: form.score,
           fieldCount: form.fields.length,
           fields: form.fields.map(f => ({ label: f.label, type: f.type, required: f.required }))
         }))
@@ -124,12 +129,17 @@ function detectForms(): FormMetadata | null {
 }
 
 async function analyzeJob() {
+  console.log("analyzing job called by sidepanel")
   const jobInfo = latestJobInfo ?? extractJobInfo()
   if (!jobInfo?.description || !jobInfo?.title) {
     return { success: false, error: "Job information not found on this page" }
   }
 
-  updateStatus("analyzing job", true)
+  updateStatus("analyzing job now", true)
+  
+  // Get user profile
+  const userProfile = await flashSyncStorage.get("userProfile")
+  
   const jobDescription: JobDescription = {
     title: jobInfo.title || "",
     company: jobInfo.company || "",
@@ -138,11 +148,27 @@ async function analyzeJob() {
     url: jobInfo.url,
     location: jobInfo.location
   }
-
-  return await sendToBackground({
-    name: "analyzeJob",
-    body: { jobDescription }
-  })
+  
+  try {
+    const response = await sendToBackground({
+      name: "analyzeJob",
+      body: { 
+        jobDescription,
+        userId: userProfile?.id 
+      }
+    })
+    
+    updateStatus("analysis complete", true)
+    console.log("analysis complete in content", response.success)
+    return response
+  } catch (error) {
+    console.error("[Flash Content] Error analyzing job:", error)
+    updateStatus("analysis failed", true)
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : "Failed to analyze job. Check if backend is running." 
+    }
+  }
 }
 
 async function fillApplication() {

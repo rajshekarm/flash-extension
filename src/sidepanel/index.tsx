@@ -61,6 +61,7 @@ export default function SidePanel() {
       const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
       if (!tab?.id) return;
 
+      console.log("requesting analyse job")
       const response = await chrome.tabs.sendMessage(tab.id, { type: 'ANALYZE_JOB' });
       
       if (response.success) {

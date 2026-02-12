@@ -5,7 +5,7 @@ import { flashStorage } from '~lib/storage/chrome';
 import type { JobDescription } from '~types';
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
-  console.log('[analyzeJob] Received request');
+  console.log('[analyzeJob] Received request', req.body);
 
   try {
     const { jobDescription, userId } = req.body as {
@@ -16,6 +16,11 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
     if (!jobDescription) {
       throw new Error('Job description is required');
     }
+
+    console.log('[analyzeJob] Calling Flash API...', {
+      title: jobDescription.title,
+      userId: userId || 'none',
+    });
 
     // Call Flash API to analyze job
     const analysis = await flashAPI.analyzeJob(jobDescription, userId);
@@ -30,7 +35,7 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
       status: 'analyzing',
     });
 
-    console.log('[analyzeJob] Analysis complete:', analysis.job_id);
+    console.log('[analyzeJob] Analysis complete:', analysis);
 
     res.send({
       success: true,
@@ -38,9 +43,22 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
     });
   } catch (error) {
     console.error('[analyzeJob] Error:', error);
+    
+    // Provide more helpful error messages
+    let errorMessage = 'Failed to analyze job';
+    if (error instanceof Error) {
+      if (error.message.includes('unreachable') || error.message.includes('ECONNREFUSED')) {
+        errorMessage = 'Backend API is not running. Please start the backend server at ' + (process.env.PLASMO_PUBLIC_API_URL || 'http://localhost:8000');
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Request timed out. Backend may be overloaded or not responding.';
+      } else {
+        errorMessage = error.message;
+      }
+    }
+    
     res.send({
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to analyze job',
+      error: errorMessage,
     });
   }
 };
