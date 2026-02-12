@@ -20,6 +20,19 @@ export function parseUserProfileError(error: any): UserProfileError {
 
   const errorMessage = error.message || error.error || 'Unknown error';
 
+  // Check for specific "email already registered" errors first
+  if (
+    errorMessage.toLowerCase().includes('email already registered') ||
+    errorMessage.toLowerCase().includes('email is already registered') ||
+    (error.statusCode === 400 && errorMessage.toLowerCase().includes('already registered'))
+  ) {
+    return {
+      type: 'DUPLICATE',
+      message: 'This email is already registered. Please try logging in instead or use a different email address.',
+      details: errorMessage
+    };
+  }
+
   // Network-related errors
   if (
     errorMessage.includes('unreachable') ||
@@ -64,16 +77,21 @@ export function parseUserProfileError(error: any): UserProfileError {
     };
   }
 
-  // Duplicate/conflict errors
+  // Duplicate/conflict errors  
   if (
     errorMessage.includes('already exists') ||
     errorMessage.includes('duplicate') ||
     errorMessage.includes('conflict') ||
-    error.statusCode === 409
+    errorMessage.toLowerCase().includes('already registered') ||
+    error.statusCode === 409 ||
+    (error.statusCode === 400 && (
+      errorMessage.toLowerCase().includes('already') ||
+      errorMessage.toLowerCase().includes('exists')
+    ))
   ) {
     return {
       type: 'DUPLICATE',
-      message: 'A profile with this email already exists. Please use a different email address.',
+      message: 'A profile with this email already exists. Please use a different email address or try logging in.',
       details: errorMessage
     };
   }
@@ -111,6 +129,10 @@ export function getUserFriendlyErrorMessage(error: UserProfileError): string {
     case 'NOT_FOUND':
       return '🔍 Profile Not Found\n\n' + error.message;
     case 'DUPLICATE':
+      // Special handling for email already registered
+      if (error.details?.toLowerCase().includes('email already registered')) {
+        return '📧 Email Already Registered\n\nThis email address is already associated with an account.';
+      }
       return '👥 Duplicate Profile\n\n' + error.message;
     case 'SERVER':
       return '🛠️ Server Issue\n\n' + error.message;
@@ -143,6 +165,14 @@ export function getErrorActionSuggestions(error: UserProfileError): string[] {
         'Contact support if this persists'
       ];
     case 'DUPLICATE':
+      // Special suggestions for email already registered
+      if (error.details?.toLowerCase().includes('email already registered')) {
+        return [
+          'Click the "Sign in" link to log into your existing account',
+          'Use a different email address if you want a new account',
+          'Reset your password if you forgot it'
+        ];
+      }
       return [
         'Use a different email address',
         'Check if you already have an account',

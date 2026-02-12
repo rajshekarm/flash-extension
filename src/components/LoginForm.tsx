@@ -3,11 +3,6 @@ import { useState } from 'react';
 import { Button } from './Button';
 import { Input } from './Input';
 import { Card } from './Card';
-import { 
-  getUserFriendlyErrorMessage, 
-  getErrorActionSuggestions,
-  parseUserProfileError 
-} from '~lib/utils/userProfileErrors';
 import { login } from '~lib/storage/chrome';
 
 interface LoginFormProps {
@@ -27,6 +22,7 @@ export function LoginForm({ onLoginSuccess, onShowRegister }: LoginFormProps) {
     e.preventDefault();
     setError('');
     
+    // Basic validation
     if (!formData.email || !formData.password) {
       setError('Please fill in all fields');
       return;
@@ -37,26 +33,34 @@ export function LoginForm({ onLoginSuccess, onShowRegister }: LoginFormProps) {
       const authSession = await login(formData.email, formData.password);
       onLoginSuccess(authSession);
     } catch (error) {
-      console.error('[LoginForm] Login error:', error);
+      console.error('[LoginForm] Login failed:', error);
       
-      const authError = parseUserProfileError(error);
-      const friendlyMessage = getUserFriendlyErrorMessage(authError);
-      const suggestions = getErrorActionSuggestions(authError);
+      const errorMessage = error instanceof Error ? error.message : 'Login failed';
       
-      setError(`${friendlyMessage}\n\nSuggestions:\n• ${suggestions.join('\n• ')}`);
+      // Simple error handling
+      if (errorMessage.toLowerCase().includes('invalid') || 
+          errorMessage.includes('401') ||
+          errorMessage.toLowerCase().includes('unauthorized')) {
+        setError('Invalid email or password');
+      } else if (errorMessage.toLowerCase().includes('network') || 
+                 errorMessage.toLowerCase().includes('connection')) {
+        setError('Cannot connect to server. Please check your connection and try again.');
+      } else {
+        setError(errorMessage);
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
+      return (
     <Card>
       <div className="text-center mb-6">
         <h2 className="text-xl font-semibold text-gray-900 mb-2">
-          🔥 Welcome to Flash
+          🔥 Welcome Back
         </h2>
         <p className="text-sm text-gray-600">
-          Sign in to your account to continue
+          Sign in to your Flash account
         </p>
       </div>
 
@@ -68,7 +72,6 @@ export function LoginForm({ onLoginSuccess, onShowRegister }: LoginFormProps) {
           onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
           placeholder="Enter your email"
           required
-          autoComplete="email"
         />
         
         <Input
@@ -78,12 +81,11 @@ export function LoginForm({ onLoginSuccess, onShowRegister }: LoginFormProps) {
           onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
           placeholder="Enter your password"
           required
-          autoComplete="current-password"
         />
 
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-md p-3">
-            <p className="text-sm text-red-700 whitespace-pre-line">{error}</p>
+            <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
 
@@ -94,7 +96,7 @@ export function LoginForm({ onLoginSuccess, onShowRegister }: LoginFormProps) {
           loading={isLoading}
           disabled={isLoading}
         >
-          {isLoading ? 'Signing In...' : 'Sign In'}
+          {isLoading ? 'Signing in...' : 'Sign In'}
         </Button>
 
         <div className="text-center">
@@ -105,7 +107,7 @@ export function LoginForm({ onLoginSuccess, onShowRegister }: LoginFormProps) {
               onClick={onShowRegister}
               className="text-blue-600 hover:text-blue-500 font-medium"
             >
-              Sign up
+              Create one
             </button>
           </p>
         </div>

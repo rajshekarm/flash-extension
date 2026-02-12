@@ -1,74 +1,62 @@
 // Message handler for creating user profile
 import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
-import { flashSyncStorage } from '~lib/storage/chrome';
-import { parseUserProfileError } from '~lib/utils/userProfileErrors';
-// Helper function to timeout promises
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error(`Profile creation timed out after ${timeoutMs}ms - check if backend is running`));
-    }, timeoutMs);
+import { flashSyncStorage, flashStorage } from '~lib/storage/chrome';
+import { apiClient } from '~lib/api/client';
 
-    promise
-      .then((result) => {
-        clearTimeout(timeout);
-        resolve(result);
-      })
-      .catch((error) => {
-        clearTimeout(timeout);
-        reject(error);
-      });
-  });
-}import type { UserProfile } from '~types';
+interface CreateProfileRequest {
+  profile: {
+    id?: string;
+    name: string;
+    email: string;
+    phone?: string;
+    skills: string[];
+    experience?: any[];
+    education?: any[];
+  };
+}
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
-  console.log('[createUserProfile] Received request', req.body);
+  console.log('[createUserProfile] Starting profile creation...');
 
   try {
-    const { profile } = req.body as {
-      profile: UserProfile;
-    };
+    const { profile } = req.body as CreateProfileRequest;
 
-    if (!profile) {
-      throw new Error('User profile data is required');
+    if (!profile || !profile.name || !profile.email) {
+      res.send({ success: false, error: 'Name and email are required' });    
+      return;
     }
 
-    if (!profile.name || !profile.email) {
-      throw new Error('Name and email are required fields');
+    // Make sure API client has auth token
+    const authToken = await flashStorage.get('authToken');
+    if (authToken) {
+      console.log('[createUserProfile] Setting auth token in API client');
+      await apiClient.setAuthToken(authToken);
+    } else {
+      console.log('[createUserProfile] No auth token found');
+      res.send({ success: false, error: 'Authentication required' });
+      return;
     }
 
-    console.log('[createUserProfile] Calling Flash API...', {
-      name: profile.name,
-      email: profile.email,
-    });
+    console.log('[createUserProfile] Calling backend API...');
+    const createdProfile = await flashAPI.createUserProfile(profile);
 
-    // Call Flash API to create user profile
-    console.log('[createUserProfile] Creating profile with backend...');
-    const createdProfile = await withTimeout(
-      flashAPI.createUserProfile(profile),
-      10000 // 10 second timeout for profile creation
-    );
-
-    // Store in sync storage as fallback/cache
+    // Store in sync storage as backup
     await flashSyncStorage.set('userProfile', createdProfile);
 
-    console.log('[createUserProfile] Profile created:', createdProfile.id);
+    console.log('[createUserProfile] Profile created successfully');
+    res.send({ success: true, data: createdProfile });
 
-    res.send({
-      success: true,
-      data: createdProfile,
-    });
   } catch (error) {
-    console.error('[createUserProfile] Error:', error);
+    console.error('[createUserProfile] Failed:', error);
     
-    const profileError = parseUserProfileError(error);
+    const errorMessage = error instanceof Error ? error.message : 'Profile creation failed';
     
-    res.send({
-      success: false,
-      error: profileError.message,
-      errorType: profileError.type,
-    });
+    if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+      res.send({ success: false, error: 'Authentication required' });
+    } else {
+      res.send({ success: false, error: errorMessage });
+    }
   }
 };
 

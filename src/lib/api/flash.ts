@@ -17,6 +17,25 @@ import type {
 } from '~types';
 
 export class FlashAPI {
+  constructor() {
+    // Ensure API client is initialized
+    this.ensureInitialized();
+  }
+
+  private async ensureInitialized() {
+    try {
+      const client = apiClient.getClient();
+      if (!client) {
+        console.log('[FlashAPI] Initializing API client...');
+        await apiClient.initialize();
+        const settings = await apiClient.getSettings();
+        console.log('[FlashAPI] API client initialized with settings:', settings);
+      }
+    } catch (error) {
+      console.error('[FlashAPI] Failed to initialize API client:', error);
+    }
+  }
+
   /**
    * Analyze a job description
    */
@@ -203,7 +222,8 @@ export class FlashAPI {
    * Login user
    */
   async login(credentials: LoginRequest): Promise<AuthSession> {
-    const response = await apiClient.getClient()!.post('/api/auth/login', credentials);
+    console.log('[FlashAPI] Attempting login...', { email: credentials.email });
+    const response = await apiClient.getClient()!.post('/api/flash/auth/login', credentials);
     const authSession = response.data;
     
     // Update API client with new auth token
@@ -216,20 +236,41 @@ export class FlashAPI {
    * Register new user
    */
   async register(credentials: RegisterRequest): Promise<AuthSession> {
-    const response = await apiClient.getClient()!.post('/api/auth/register', credentials);
-    const authSession = response.data;
+    console.log('[FlashAPI] Attempting registration...', { name: credentials.name, email: credentials.email });
     
-    // Update API client with new auth token
-    await apiClient.setAuthToken(authSession.access_token);
-    
-    return authSession;
+    try {
+      const response = await apiClient.getClient()!.post('/api/flash/auth/register', credentials);
+      console.log('[FlashAPI] Registration response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        data: response.data
+      });
+      
+      const authSession = response.data;
+      
+      // Update API client with new auth token
+      await apiClient.setAuthToken(authSession.access_token);
+      
+      console.log('[FlashAPI] Registration successful, auth token set');
+      return authSession;
+    } catch (error) {
+      console.error('[FlashAPI] Registration failed with error:', error);
+      if (error instanceof Error) {
+        console.error('[FlashAPI] Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+      }
+      throw error;
+    }
   }
 
   /**
    * Logout user
    */
   async logout(): Promise<void> {
-    await apiClient.getClient()!.post('/api/auth/logout');
+    await apiClient.getClient()!.post('/api/flash/auth/logout');
     
     // Clear auth token from API client
     await apiClient.clearAuthToken();
@@ -239,7 +280,8 @@ export class FlashAPI {
    * Get current authenticated user
    */
   async getCurrentUser(): Promise<AuthUser> {
-    const response = await apiClient.getClient()!.get('/api/auth/me');
+    console.log('[FlashAPI] Getting current user info...');
+    const response = await apiClient.getClient()!.get('/api/flash/auth/me');
     return response.data;
   }
 
@@ -247,7 +289,8 @@ export class FlashAPI {
    * Refresh authentication token
    */
   async refreshToken(request: RefreshTokenRequest): Promise<{ access_token: string; expires_at: string }> {
-    const response = await apiClient.getClient()!.post('/api/auth/refresh', request);
+    console.log('[FlashAPI] Refreshing authentication token...');
+    const response = await apiClient.getClient()!.post('/api/flash/auth/refresh', request);
     const refreshData = response.data;
     
     // Update API client with new auth token

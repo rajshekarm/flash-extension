@@ -12,7 +12,7 @@ import {
   getErrorActionSuggestions,
   parseUserProfileError 
 } from '~lib/utils/userProfileErrors';
-import { getCurrentAuthUser } from '~lib/storage/chrome';
+import { flashStorage } from '~lib/storage/chrome';
 
 type Step = 'detection' | 'analysis' | 'filling' | 'review';
 
@@ -54,15 +54,21 @@ function MainSidePanelContent() {
       // Get job info and forms from content script
       const jobResponse = await chrome.tabs.sendMessage(tab.id, { type: 'GET_JOB_INFO' });
       const formsResponse = await chrome.tabs.sendMessage(tab.id, { type: 'GET_FORMS' });
-      // Get authenticated user and load their profile
-      const currentUser = await getCurrentAuthUser();
+      
+      // Check auth directly from storage instead of getCurrentAuthUser
+      const authSession = await flashStorage.get('authSession');
       let userProfileData = null;
       
-      if (currentUser) {
+      console.log('[Side Panel] Auth session:', { 
+        hasSession: !!authSession, 
+        userId: authSession?.user?.id 
+      });
+      
+      if (authSession?.user) {
         try {
           const profileResponse = await chrome.runtime.sendMessage({
             name: 'getUserProfile',
-            body: { userId: currentUser.id }
+            body: { userId: authSession.user.id }
           });
           
           if (profileResponse?.success) {
@@ -90,11 +96,11 @@ function MainSidePanelContent() {
         }));
       } else {
         // If no profile exists, pre-fill with auth user data
-        if (currentUser) {
+        if (authSession?.user) {
           setProfileForm((prev) => ({
             ...prev,
-            name: currentUser.name || '',
-            email: currentUser.email || '',
+            name: authSession.user.name || '',
+            email: authSession.user.email || '',
           }));
         }
       }
@@ -113,14 +119,23 @@ function MainSidePanelContent() {
 
     setSavingProfile(true);
     try {
-      const currentUser = await getCurrentAuthUser();
-      if (!currentUser) {
+      // Check auth directly from storage instead of relying on getCurrentAuthUser
+      const authSession = await flashStorage.get('authSession');
+      const authToken = await flashStorage.get('authToken');
+      
+      console.log('[handleSaveProfile] Auth check:', { 
+        hasSession: !!authSession, 
+        hasToken: !!authToken,
+        userId: authSession?.user?.id 
+      });
+      
+      if (!authSession || !authToken || !authSession.user) {
         alert('Authentication required. Please log in again.');
         return;
       }
 
       const profileData = {
-        id: userProfile?.id || currentUser.id, // Use current user ID if no profile exists
+        id: userProfile?.id || authSession.user.id,
         name: profileForm.name,
         email: profileForm.email,
         phone: profileForm.phone || undefined,
@@ -133,21 +148,27 @@ function MainSidePanelContent() {
       };
 
       let response;
-      if (userProfile?.id) {
-        // Update existing profile
-        response = await chrome.runtime.sendMessage({
-          name: 'updateUserProfile',
-          body: { userId: userProfile.id, profile: profileData }
-        });
-      } else {
-        // Create new profile for authenticated user
-        response = await chrome.runtime.sendMessage({
-          name: 'createUserProfile',
-          body: { profile: profileData }
-        });
+      try {
+        if (userProfile?.id) {
+          // Update existing profile
+          response = await chrome.runtime.sendMessage({
+            name: 'updateUserProfile',
+            body: { userId: userProfile.id, profile: profileData }
+          });
+        } else {
+          // Create new profile for authenticated user
+          response = await chrome.runtime.sendMessage({
+            name: 'createUserProfile',
+            body: { profile: profileData }
+          });
+        }
+      } catch (messageError) {
+        console.error('[handleSaveProfile] Message error:', messageError);
+        alert('Extension communication error. Try reloading the page.');
+        return;
       }
 
-      if (response.success) {
+      if (response?.success) {
         setUserProfile(response.data);
         setProfileForm((prev) => {
           const fallbackSkills = prev.skills
