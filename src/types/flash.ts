@@ -168,7 +168,7 @@ export interface AnswerQuestionResponse {
 export interface FillApplicationRequest {
   form_fields: FormField[];
   user_id: string;
-  job_id: string;
+  job_id?: string;
 }
 
 export interface FillApplicationResponse {

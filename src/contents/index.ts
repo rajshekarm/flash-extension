@@ -210,9 +210,9 @@ async function  fillApplication() {
   const currentSession = await flashStorage.get("currentSession")
   const jobId = currentSession?.currentJob?.job_id
 
-  if (!jobId) {
-    return { success: false, error: "Job ID not found. Please run job analysis first." }
-  }
+  // if (!jobId) {
+  //   return { success: false, error: "Job ID not found. Please run job analysis first." }
+  // }
 
   
   

@@ -13,18 +13,17 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
       userId: string;
       jobId: string;
     };
-
+    
     if (!formFields || formFields.length === 0) {
       throw new Error('Form fields are required');
     }
-
     if (!userId) {
       throw new Error('User ID is required');
     }
 
-    if (!jobId) {
-      throw new Error('Job ID is required');
-    }
+    // if (!jobId) {
+    //   throw new Error('Job ID is required');
+    // }
     
     console.log(`[fillApplication] Processing ${formFields.length} fields`);
 
