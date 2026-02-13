@@ -69,6 +69,7 @@ export class FieldInjector {
     switch (field.type) {
       case 'text':
       case 'email':
+      case 'password':
       case 'phone':
       case 'url':
       case 'number':
