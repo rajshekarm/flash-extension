@@ -658,7 +658,7 @@ function MainSidePanelContent() {
       // console.log('[Side Panel] Fill All Fields - Starting...');
 
       // Step 1: Generate answers
-      const fillResponse = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+      const fillResponse = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION_WITH_RETRY' });
 
         console.log('[fillResponse] Fill All Fields - Starting...',fillResponse );
 
@@ -675,7 +675,15 @@ function MainSidePanelContent() {
         alert('⚠️ No answers generated. Please ensure:\n• Form fields are detected\n• User profile is set up\n• Backend API is running');
         return;
       }
-
+      const smartInjection = fillResponse.data?.injection;
+      if (smartInjection) {
+        setAnswers(answers);
+        setCurrentStep('review');
+        const unresolvedCount = fillResponse.data?.unresolvedFieldIds?.length || 0;
+        const retryRounds = fillResponse.data?.retryRounds || 0;
+        alert(`Form filled successfully!\n\nResults:\n- Filled: ${smartInjection.filled} fields\n- Skipped: ${smartInjection.skipped}\n- Failed: ${smartInjection.failed}\n- Retry rounds: ${retryRounds}\n- Unresolved required fields: ${unresolvedCount}\n\nPlease review the form before submitting.`);
+        return;
+      }
       // Step 2: Inject answers immediately
       const injectResponse = await chrome.tabs.sendMessage(tab.id, { 
         type: 'INJECT_ANSWERS',
@@ -709,7 +717,7 @@ function MainSidePanelContent() {
       console.log('[Sidepanel] Fill All Fields - Starting...');
       
       // Step 1: Generate answers
-      const fillResponse = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION' });
+      const fillResponse = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_APPLICATION_WITH_RETRY' });
       
       if (!fillResponse.success) {
         const errorMsg = fillResponse.error || 'Unknown error occurred';
@@ -726,7 +734,14 @@ function MainSidePanelContent() {
       }
 
       setAnswers(answers);
-
+      const smartInjection = fillResponse.data?.injection;
+      if (smartInjection) {
+        setCurrentStep('review');
+        const unresolvedCount = fillResponse.data?.unresolvedFieldIds?.length || 0;
+        const retryRounds = fillResponse.data?.retryRounds || 0;
+        alert(`Form filled successfully!\n\nResults:\n- Filled: ${smartInjection.filled}\n- Skipped: ${smartInjection.skipped}\n- Failed: ${smartInjection.failed}\n- Retry rounds: ${retryRounds}\n- Unresolved required fields: ${unresolvedCount}\n\nPlease review the form before submitting.`);
+        return;
+      }
       // Step 2: Immediately inject answers
       const injectResponse = await chrome.tabs.sendMessage(tab.id, { 
         type: 'INJECT_ANSWERS',
@@ -1221,3 +1236,4 @@ export default function SidePanel() {
     </AuthGuard>
   );
 }
+

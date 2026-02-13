@@ -153,7 +153,7 @@ export interface FormField {
   id: string;
   name?: string;
   label: string;
-  type: 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'file' | 'date';
+  type: 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'file' | 'date' | 'password';
   required: boolean;
   placeholder?: string;
   options?: string[];
