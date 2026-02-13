@@ -28,6 +28,7 @@ export class FormDetector {
       const shouldInclude = fields.length >= 1 || score.score > 0.3;
       
       if (shouldInclude) {
+        this.logDetectedFields(fields, 'native-form');
         detectedForms.push({
           element: form,
           action: form.action,
@@ -92,6 +93,7 @@ export class FormDetector {
     const score = this.scoreContainer(bestContainer);
     const fields = this.extractFields(bestContainer);
     if (fields.length === 0) return null;
+    this.logDetectedFields(fields, 'virtual-form');
 
     return {
       element: bestContainer as unknown as HTMLFormElement,
@@ -449,6 +451,24 @@ export class FormDetector {
     }
 
     return undefined;
+  }
+
+  /**
+   * Debug helper to print all detected fields
+   */
+  private logDetectedFields(fields: DetectedFormField[], source: string): void {
+    console.log(`[FormDetector] Detected ${fields.length} fields from ${source}`);
+    fields.forEach((field, index) => {
+      console.log('[FormDetector] Field', {
+        index,
+        id: field.id,
+        name: field.name,
+        label: field.label,
+        type: field.type,
+        required: field.required,
+        placeholder: field.placeholder || '',
+      });
+    });
   }
 
   /**
