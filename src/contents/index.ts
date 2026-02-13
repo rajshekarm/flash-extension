@@ -41,23 +41,7 @@ let autoFillEnabled = false
 let isProcessingForm = false
 let processedFormIds = new Set<string>()
 let lastFormDetectionTime = 0
-const MAX_VALIDATION_RETRY_ROUNDS = 2
-const AUTO_ADVANCE_ALLOWED_LABELS = [
-  "next",
-  "continue",
-  "save and continue",
-  "next step",
-  "sign in",
-  "log in",
-  "login"
-]
-const AUTO_ADVANCE_BLOCKED_LABELS = [
-  "submit",
-  "apply",
-  "send application",
-  "finish",
-  "complete application"
-]
+// const MAX_VALIDATION_RETRY_ROUNDS = 2
 
 function ensureStatusIndicator() {
   if (statusIndicator && document.body?.contains(statusIndicator)) return
@@ -361,6 +345,8 @@ function findMatchingFieldForElement(fields: any[], element: HTMLElement | null)
 
 function collectValidationDelta(primaryForm: any) {
   const deltaFieldIds = new Set<string>()
+  const requiredEmptyFieldIds = new Set<string>()
+  const invalidFieldIds = new Set<string>()
   const validationErrors: string[] = []
   const fields = primaryForm.fields || []
 
@@ -369,6 +355,7 @@ function collectValidationDelta(primaryForm: any) {
     if (!field?.element || !isElementVisible(field.element)) return
     if (isFieldEmpty(field)) {
       deltaFieldIds.add(field.id)
+      requiredEmptyFieldIds.add(field.id)
     }
   })
 
@@ -377,7 +364,10 @@ function collectValidationDelta(primaryForm: any) {
   )
   invalidControls.forEach((control) => {
     const matched = findMatchingFieldForElement(fields, control as HTMLElement)
-    if (matched?.id) deltaFieldIds.add(matched.id)
+    if (matched?.id) {
+      deltaFieldIds.add(matched.id)
+      invalidFieldIds.add(matched.id)
+    }
   })
 
   const errorElements = document.querySelectorAll(
@@ -409,11 +399,16 @@ function collectValidationDelta(primaryForm: any) {
     }
 
     const matched = findMatchingFieldForElement(fields, linkedControl)
-    if (matched?.id) deltaFieldIds.add(matched.id)
+    if (matched?.id) {
+      deltaFieldIds.add(matched.id)
+      invalidFieldIds.add(matched.id)
+    }
   })
 
   return {
     deltaFieldIds,
+    requiredEmptyFieldIds,
+    invalidFieldIds,
     validationErrors: Array.from(new Set(validationErrors))
   }
 }
@@ -442,21 +437,11 @@ function isButtonEnabled(button: HTMLElement): boolean {
   return isElementVisible(button)
 }
 
-function isSafeAdvanceLabel(label: string): boolean {
-  const lower = normalizeText(label)
-  if (!lower) return false
-  if (AUTO_ADVANCE_BLOCKED_LABELS.some((blocked) => lower.includes(blocked))) return false
-  return AUTO_ADVANCE_ALLOWED_LABELS.some((allowed) => lower.includes(allowed))
+function isSignInLabel(label: string): boolean {
+  return label.includes("sign in") || label.includes("log in") || label.includes("login")
 }
 
-function getStepSignature(): string {
-  const heading =
-    document.querySelector("h1, h2, [data-automation-id*='pageHeader'], [data-automation-id*='title']")?.textContent ||
-    ""
-  return `${window.location.pathname}|${normalizeText(heading)}`
-}
-
-function findAdvanceButton(primaryForm: any): HTMLElement | null {
+function findActionButton(primaryForm: any, intent: "advance" | "signin"): HTMLElement | null {
   const scopedRoot = (primaryForm?.element as ParentNode) || document
   const candidates = scopedRoot.querySelectorAll(
     'button, input[type="button"], input[type="submit"], [role="button"]'
@@ -467,41 +452,35 @@ function findAdvanceButton(primaryForm: any): HTMLElement | null {
     if (!(candidate instanceof HTMLElement)) continue
     if (!isButtonEnabled(candidate)) continue
     const label = getElementLabel(candidate)
-    if (!isSafeAdvanceLabel(label)) continue
+    if (intent === "signin") {
+      if (!isSignInLabel(label)) continue
+      return candidate
+    }
+
+    // Keep advance logic simple: first visible enabled button in the active form.
     bestMatch = candidate
-    if (label.includes("save and continue")) return candidate
+    return candidate
   }
 
   return bestMatch
 }
 
 async function autoAdvanceToNextStep(primaryForm: any) {
-  const signatureBefore = getStepSignature()
-  const button = findAdvanceButton(primaryForm)
+  console.log("[AutoAdvance] called")
+  const button = findActionButton(primaryForm, "advance")
   if (!button) {
-    return { clicked: false, moved: false, reason: "No eligible next/continue button found" }
+    return { clicked: false, moved: false, reason: "No clickable button found" }
   }
 
   const buttonLabel = getElementLabel(button)
-  if (AUTO_ADVANCE_BLOCKED_LABELS.some((blocked) => buttonLabel.includes(blocked))) {
-    return { clicked: false, moved: false, reason: `Blocked button label: ${buttonLabel}` }
-  }
 
   try {
     button.scrollIntoView({ block: "center", behavior: "smooth" })
     await sleep(150)
     button.click()
     console.log("[Flash Content] Auto-advance clicked:", buttonLabel)
-
-    for (let i = 0; i < 8; i++) {
-      await sleep(250)
-      const now = getStepSignature()
-      if (now !== signatureBefore) {
-        return { clicked: true, moved: true, reason: "Step changed", buttonLabel }
-      }
-    }
-
-    return { clicked: true, moved: false, reason: "Clicked but no detected step change", buttonLabel }
+    await sleep(2000)
+    return { clicked: true, moved: true, reason: "Clicked and waited for navigation", buttonLabel }
   } catch (error) {
     return {
       clicked: false,
@@ -515,74 +494,56 @@ async function fillApplicationWithValidationRetry() {
   const allAnswers = new Map<string, Answer>()
   const retryDiagnostics: string[] = []
   let latestInjection: any = null
+  let injectedAtLeastOnce = false
 
   const initialFill = await fillApplication()
   if (!initialFill.success) return initialFill
+
 
   const initialAnswers = initialFill.data?.answers || []
   initialAnswers.forEach((answer: Answer) => {
     if (answer.field_id) allAnswers.set(answer.field_id, answer)
   })
 
+    console.log("[Intiyisl FILL ANswers]", initialAnswers)
+
+    
   if (initialAnswers.length > 0) {
     const initialInject = await injectAnswers(initialAnswers)
     if (initialInject.success) {
       latestInjection = initialInject.data
+      injectedAtLeastOnce = true
     }
   }
 
   let completedRounds = 0
-  for (let round = 1; round <= MAX_VALIDATION_RETRY_ROUNDS; round++) {
-    await sleep(300)
-    detectForms()
-    const primaryForm = getPrimaryForm()
-    if (!primaryForm) break
-
-    const { deltaFieldIds, validationErrors } = collectValidationDelta(primaryForm)
-    const missingIds = Array.from(deltaFieldIds).filter((fieldId) => !allAnswers.has(fieldId))
-
-    if (validationErrors.length) {
-      retryDiagnostics.push(...validationErrors.map((message) => `[round ${round}] ${message}`))
-    }
-
-    if (missingIds.length === 0) {
-      completedRounds = round - 1
-      break
-    }
-
-    console.log(`[Flash Content] Retry round ${round}, missing fields:`, missingIds)
-    const deltaFill = await fillApplication(new Set(missingIds))
-    if (!deltaFill.success) {
-      return {
-        success: false,
-        error: deltaFill.error || "Failed to generate missing field answers",
-        data: {
-          answers: Array.from(allAnswers.values()),
-          retryDiagnostics,
-          retryRounds: round
-        }
-      }
-    }
-
-    const deltaAnswers = (deltaFill.data?.answers || []).filter((answer: Answer) => answer?.field_id)
-    if (deltaAnswers.length === 0) {
-      completedRounds = round
-      break
-    }
-
-    deltaAnswers.forEach((answer: Answer) => allAnswers.set(answer.field_id, answer))
-    const deltaInject = await injectAnswers(deltaAnswers)
-    if (deltaInject.success) {
-      latestInjection = deltaInject.data
-    }
-    completedRounds = round
+  let lastDeltaSummary: {
+    requiredEmptyCount: number
+    invalidCount: number
+    sampleFieldIds: string[]
+    sampleErrors: string[]
+  } = {
+    requiredEmptyCount: 0,
+    invalidCount: 0,
+    sampleFieldIds: [],
+    sampleErrors: []
   }
+  // Retry loop is intentionally disabled for now.
+  // We go straight from initial injection to auto-advance.
 
-  detectForms()
   const postForm = getPrimaryForm()
-  const unresolvedFieldIds = postForm
-    ? Array.from(collectValidationDelta(postForm).deltaFieldIds).filter((fieldId) => !allAnswers.has(fieldId))
+  const postDelta = postForm ? collectValidationDelta(postForm) : null
+  const unresolvedFieldIds = postDelta
+    ? Array.from(postDelta.deltaFieldIds).filter((fieldId) => !allAnswers.has(fieldId))
     : []
+  if (postDelta) {
+    lastDeltaSummary = {
+      requiredEmptyCount: postDelta.requiredEmptyFieldIds.size,
+      invalidCount: postDelta.invalidFieldIds.size,
+      sampleFieldIds: unresolvedFieldIds.slice(0, 5),
+      sampleErrors: postDelta.validationErrors.slice(0, 3)
+    }
+  }
 
   let autoAdvance: {
     clicked: boolean
@@ -591,7 +552,8 @@ async function fillApplicationWithValidationRetry() {
     buttonLabel?: string
   } | null = null
 
-  if (postForm && unresolvedFieldIds.length === 0) {
+  // Always attempt to advance once injection is complete.
+  if (postForm && injectedAtLeastOnce) {
     autoAdvance = await autoAdvanceToNextStep(postForm)
     if (autoAdvance.clicked) {
       updateStatus(autoAdvance.moved ? "advanced to next step" : "clicked continue", true)
@@ -606,13 +568,13 @@ async function fillApplicationWithValidationRetry() {
       retryRounds: completedRounds,
       unresolvedFieldIds,
       retryDiagnostics,
+      lastDeltaSummary,
       autoAdvance
     }
   }
 }
 
 async function autoAdvanceOnce() {
-  detectForms()
   const primaryForm = getPrimaryForm()
   if (!primaryForm) {
     return { success: false, error: "No form available for auto-advance" }
@@ -623,21 +585,13 @@ async function autoAdvanceOnce() {
 }
 
 async function clickSignInOnce() {
-  const candidates = document.querySelectorAll(
-    'button, input[type="submit"], input[type="button"], [role="button"]'
-  )
-
-  for (const candidate of candidates) {
-    if (!(candidate instanceof HTMLElement)) continue
-    if (!isButtonEnabled(candidate)) continue
-    const label = getElementLabel(candidate)
-    if (!label.includes("sign in") && !label.includes("log in") && !label.includes("login")) {
-      continue
-    }
-
-    candidate.scrollIntoView({ block: "center", behavior: "smooth" })
+  const primaryForm = getPrimaryForm()
+  const button = findActionButton(primaryForm, "signin")
+  if (button) {
+    const label = getElementLabel(button)
+    button.scrollIntoView({ block: "center", behavior: "smooth" })
     await sleep(100)
-    candidate.click()
+    button.click()
     console.log("[Flash Content] Sign In clicked", { buttonLabel: label })
     return { success: true, data: { clicked: true, buttonLabel: label } }
   }

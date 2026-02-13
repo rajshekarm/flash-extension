@@ -10,12 +10,13 @@ import type {
 import { generateId } from '../utils/helpers';
 
 export class FormDetector {
+  private readonly debug = false;
+
   /**
    * Detect all forms on the current page
    */
   detectForms(): FormMetadata | null {
     const forms = document.querySelectorAll('form');
-    console.log("detected forms are", forms)
     const detectedForms: DetectedForm[] = [];
 
     forms.forEach((form) => {
@@ -597,6 +598,7 @@ export class FormDetector {
    * Debug helper to print all detected fields
    */
   private logDetectedFields(fields: DetectedFormField[], source: string): void {
+    if (!this.debug) return;
     console.log(`[FormDetector] Detected ${fields.length} fields from ${source}`);
     fields.forEach((field, index) => {
       console.log('[FormDetector] Field', {
