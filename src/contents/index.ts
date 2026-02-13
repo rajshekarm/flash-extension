@@ -42,6 +42,22 @@ let isProcessingForm = false
 let processedFormIds = new Set<string>()
 let lastFormDetectionTime = 0
 const MAX_VALIDATION_RETRY_ROUNDS = 2
+const AUTO_ADVANCE_ALLOWED_LABELS = [
+  "next",
+  "continue",
+  "save and continue",
+  "next step",
+  "sign in",
+  "log in",
+  "login"
+]
+const AUTO_ADVANCE_BLOCKED_LABELS = [
+  "submit",
+  "apply",
+  "send application",
+  "finish",
+  "complete application"
+]
 
 function ensureStatusIndicator() {
   if (statusIndicator && document.body?.contains(statusIndicator)) return
@@ -200,6 +216,8 @@ function getPrimaryForm() {
 }
 
 function normalizeFieldType(type: string): FormField["type"] {
+  if (type === "password") return "text"
+
   const allowed: FormField["type"][] = [
     "text",
     "email",
@@ -209,8 +227,7 @@ function normalizeFieldType(type: string): FormField["type"] {
     "radio",
     "checkbox",
     "file",
-    "date",
-    "password"
+    "date"
   ]
 
   return allowed.includes(type as FormField["type"]) ? (type as FormField["type"]) : "text"
@@ -401,6 +418,99 @@ function collectValidationDelta(primaryForm: any) {
   }
 }
 
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase()
+}
+
+function getElementLabel(element: HTMLElement): string {
+  if (element instanceof HTMLInputElement) {
+    return normalizeText(element.value || element.getAttribute("aria-label") || "")
+  }
+  return normalizeText(
+    element.textContent ||
+      element.getAttribute("aria-label") ||
+      element.getAttribute("value") ||
+      ""
+  )
+}
+
+function isButtonEnabled(button: HTMLElement): boolean {
+  const disabledAttr = button.getAttribute("disabled") !== null
+  const ariaDisabled = button.getAttribute("aria-disabled") === "true"
+  const classDisabled = /\bdisabled\b/i.test(button.className || "")
+  if (disabledAttr || ariaDisabled || classDisabled) return false
+  return isElementVisible(button)
+}
+
+function isSafeAdvanceLabel(label: string): boolean {
+  const lower = normalizeText(label)
+  if (!lower) return false
+  if (AUTO_ADVANCE_BLOCKED_LABELS.some((blocked) => lower.includes(blocked))) return false
+  return AUTO_ADVANCE_ALLOWED_LABELS.some((allowed) => lower.includes(allowed))
+}
+
+function getStepSignature(): string {
+  const heading =
+    document.querySelector("h1, h2, [data-automation-id*='pageHeader'], [data-automation-id*='title']")?.textContent ||
+    ""
+  return `${window.location.pathname}|${normalizeText(heading)}`
+}
+
+function findAdvanceButton(primaryForm: any): HTMLElement | null {
+  const scopedRoot = (primaryForm?.element as ParentNode) || document
+  const candidates = scopedRoot.querySelectorAll(
+    'button, input[type="button"], input[type="submit"], [role="button"]'
+  )
+
+  let bestMatch: HTMLElement | null = null
+  for (const candidate of candidates) {
+    if (!(candidate instanceof HTMLElement)) continue
+    if (!isButtonEnabled(candidate)) continue
+    const label = getElementLabel(candidate)
+    if (!isSafeAdvanceLabel(label)) continue
+    bestMatch = candidate
+    if (label.includes("save and continue")) return candidate
+  }
+
+  return bestMatch
+}
+
+async function autoAdvanceToNextStep(primaryForm: any) {
+  const signatureBefore = getStepSignature()
+  const button = findAdvanceButton(primaryForm)
+  if (!button) {
+    return { clicked: false, moved: false, reason: "No eligible next/continue button found" }
+  }
+
+  const buttonLabel = getElementLabel(button)
+  if (AUTO_ADVANCE_BLOCKED_LABELS.some((blocked) => buttonLabel.includes(blocked))) {
+    return { clicked: false, moved: false, reason: `Blocked button label: ${buttonLabel}` }
+  }
+
+  try {
+    button.scrollIntoView({ block: "center", behavior: "smooth" })
+    await sleep(150)
+    button.click()
+    console.log("[Flash Content] Auto-advance clicked:", buttonLabel)
+
+    for (let i = 0; i < 8; i++) {
+      await sleep(250)
+      const now = getStepSignature()
+      if (now !== signatureBefore) {
+        return { clicked: true, moved: true, reason: "Step changed", buttonLabel }
+      }
+    }
+
+    return { clicked: true, moved: false, reason: "Clicked but no detected step change", buttonLabel }
+  } catch (error) {
+    return {
+      clicked: false,
+      moved: false,
+      reason: error instanceof Error ? error.message : "Failed to click button"
+    }
+  }
+}
+
 async function fillApplicationWithValidationRetry() {
   const allAnswers = new Map<string, Answer>()
   const retryDiagnostics: string[] = []
@@ -474,6 +584,20 @@ async function fillApplicationWithValidationRetry() {
     ? Array.from(collectValidationDelta(postForm).deltaFieldIds).filter((fieldId) => !allAnswers.has(fieldId))
     : []
 
+  let autoAdvance: {
+    clicked: boolean
+    moved: boolean
+    reason: string
+    buttonLabel?: string
+  } | null = null
+
+  if (postForm && unresolvedFieldIds.length === 0) {
+    autoAdvance = await autoAdvanceToNextStep(postForm)
+    if (autoAdvance.clicked) {
+      updateStatus(autoAdvance.moved ? "advanced to next step" : "clicked continue", true)
+    }
+  }
+
   return {
     success: true,
     data: {
@@ -481,9 +605,44 @@ async function fillApplicationWithValidationRetry() {
       injection: latestInjection,
       retryRounds: completedRounds,
       unresolvedFieldIds,
-      retryDiagnostics
+      retryDiagnostics,
+      autoAdvance
     }
   }
+}
+
+async function autoAdvanceOnce() {
+  detectForms()
+  const primaryForm = getPrimaryForm()
+  if (!primaryForm) {
+    return { success: false, error: "No form available for auto-advance" }
+  }
+
+  const result = await autoAdvanceToNextStep(primaryForm)
+  return { success: true, data: result }
+}
+
+async function clickSignInOnce() {
+  const candidates = document.querySelectorAll(
+    'button, input[type="submit"], input[type="button"], [role="button"]'
+  )
+
+  for (const candidate of candidates) {
+    if (!(candidate instanceof HTMLElement)) continue
+    if (!isButtonEnabled(candidate)) continue
+    const label = getElementLabel(candidate)
+    if (!label.includes("sign in") && !label.includes("log in") && !label.includes("login")) {
+      continue
+    }
+
+    candidate.scrollIntoView({ block: "center", behavior: "smooth" })
+    await sleep(100)
+    candidate.click()
+    console.log("[Flash Content] Sign In clicked", { buttonLabel: label })
+    return { success: true, data: { clicked: true, buttonLabel: label } }
+  }
+
+  return { success: false, error: "Sign In button not found" }
 }
 
 async function injectAnswers(answers: Answer[]) {
@@ -705,6 +864,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       
       case "FILL_APPLICATION_WITH_RETRY":
         sendResponse(await fillApplicationWithValidationRetry())
+        break
+
+      case "AUTO_ADVANCE_ONCE":
+        sendResponse(await autoAdvanceOnce())
+        break
+      
+      case "AUTO_CLICK_SIGNIN":
+        sendResponse(await clickSignInOnce())
         break
 
       case "INJECT_ANSWERS":

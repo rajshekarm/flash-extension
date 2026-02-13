@@ -159,6 +159,7 @@ function MainSidePanelContent() {
   const [generating, setGenerating] = useState(false);
   const [injecting, setInjecting] = useState(false);
   const [filling, setFilling] = useState(false);
+  const [autoAdvancing, setAutoAdvancing] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [profileForm, setProfileForm] = useState<ProfileFormState>(INITIAL_PROFILE_FORM);
   const [showProfileForm, setShowProfileForm] = useState(false);
@@ -681,7 +682,13 @@ function MainSidePanelContent() {
         setCurrentStep('review');
         const unresolvedCount = fillResponse.data?.unresolvedFieldIds?.length || 0;
         const retryRounds = fillResponse.data?.retryRounds || 0;
-        alert(`Form filled successfully!\n\nResults:\n- Filled: ${smartInjection.filled} fields\n- Skipped: ${smartInjection.skipped}\n- Failed: ${smartInjection.failed}\n- Retry rounds: ${retryRounds}\n- Unresolved required fields: ${unresolvedCount}\n\nPlease review the form before submitting.`);
+        const autoAdvance = fillResponse.data?.autoAdvance;
+        const autoAdvanceMsg = autoAdvance
+          ? `\n- Auto advance: ${autoAdvance.clicked ? (autoAdvance.moved ? 'clicked and moved' : 'clicked') : 'not clicked'} (${autoAdvance.reason})`
+          : '';
+        console.log(
+          `[Side Panel] Form filled successfully (smart path). Filled=${smartInjection.filled}, Skipped=${smartInjection.skipped}, Failed=${smartInjection.failed}, RetryRounds=${retryRounds}, Unresolved=${unresolvedCount}${autoAdvanceMsg}`
+        );
         return;
       }
       // Step 2: Inject answers immediately
@@ -694,7 +701,9 @@ function MainSidePanelContent() {
         const result = injectResponse.data;
         setAnswers(answers);
         setCurrentStep('review');
-        alert(`✅ Form filled successfully!\n\n📊 Results:\n• Filled: ${result.filled} fields\n• Skipped: ${result.skipped}\n• Failed: ${result.failed}\n\n⚠️ Please review the form before submitting.`);
+        console.log(
+          `[Side Panel] Form filled successfully (fallback inject). Filled=${result.filled}, Skipped=${result.skipped}, Failed=${result.failed}`
+        );
       } else {
         alert(`❌ Failed to fill form:\n\n${injectResponse.error}`);
       }
@@ -739,7 +748,13 @@ function MainSidePanelContent() {
         setCurrentStep('review');
         const unresolvedCount = fillResponse.data?.unresolvedFieldIds?.length || 0;
         const retryRounds = fillResponse.data?.retryRounds || 0;
-        alert(`Form filled successfully!\n\nResults:\n- Filled: ${smartInjection.filled}\n- Skipped: ${smartInjection.skipped}\n- Failed: ${smartInjection.failed}\n- Retry rounds: ${retryRounds}\n- Unresolved required fields: ${unresolvedCount}\n\nPlease review the form before submitting.`);
+        const autoAdvance = fillResponse.data?.autoAdvance;
+        const autoAdvanceMsg = autoAdvance
+          ? `\n- Auto advance: ${autoAdvance.clicked ? (autoAdvance.moved ? 'clicked and moved' : 'clicked') : 'not clicked'} (${autoAdvance.reason})`
+          : '';
+        console.log(
+          `[Side Panel] Form filled successfully (generate smart path). Filled=${smartInjection.filled}, Skipped=${smartInjection.skipped}, Failed=${smartInjection.failed}, RetryRounds=${retryRounds}, Unresolved=${unresolvedCount}${autoAdvanceMsg}`
+        );
         return;
       }
       // Step 2: Immediately inject answers
@@ -752,7 +767,9 @@ function MainSidePanelContent() {
         const result = injectResponse.data;
         console.log('[Sidepanel] Injection result:', result);
         setCurrentStep('review');
-        alert(`✅ Form filled successfully!\n\n📊 Results:\n• Filled: ${result.filled}\n• Skipped: ${result.skipped}\n• Failed: ${result.failed}\n\n⚠️ Please review the form before submitting.`);
+        console.log(
+          `[Side Panel] Form filled successfully (generate fallback inject). Filled=${result.filled}, Skipped=${result.skipped}, Failed=${result.failed}`
+        );
       } else {
         // Keep answers visible even if injection fails
         setCurrentStep('filling');
@@ -784,7 +801,9 @@ function MainSidePanelContent() {
         const result = response.data;
         console.log('[Sidepanel] Injection result:', result);
         setCurrentStep('review');
-        alert(`✅ Answers injected successfully!\n\n📊 Results:\n• Filled: ${result.filled}\n• Skipped: ${result.skipped}\n• Failed: ${result.failed}\n\n⚠️ Please review the form before submitting.`);
+        console.log(
+          `[Side Panel] Answers injected successfully. Filled=${result.filled}, Skipped=${result.skipped}, Failed=${result.failed}`
+        );
       } else {
         alert(`❌ Failed to inject answers:\n\n${response.error}`);
       }
@@ -793,6 +812,32 @@ function MainSidePanelContent() {
       alert(`❌ Error injecting answers:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setInjecting(false);
+    }
+  }
+
+  async function handleAutoAdvanceTest() {
+    setAutoAdvancing(true);
+    try {
+      const window = await chrome.windows.getCurrent();
+      const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
+      if (!tab?.id) {
+        alert('❌ Could not find active tab');
+        return;
+      }
+
+      const response = await chrome.tabs.sendMessage(tab.id, { type: 'AUTO_CLICK_SIGNIN' });
+      if (!response?.success) {
+        alert(`❌ Sign In click failed:\n\n${response?.error || 'Unknown error'}`);
+        return;
+      }
+
+      const result = response.data || {};
+      console.log('[Side Panel] Sign In click triggered', result);
+      alert(`Sign In click triggered.\n\nButton: ${result.buttonLabel || 'n/a'}`);
+    } catch (error) {
+      alert(`❌ Auto-advance error:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setAutoAdvancing(false);
     }
   }
 
@@ -1043,6 +1088,19 @@ function MainSidePanelContent() {
                 </Button>
                 <p className="text-xs text-gray-500 text-center -mt-1">
                   Refresh the DOM scan if you navigated to a new application form.
+                </p>
+
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  onClick={handleAutoAdvanceTest}
+                  loading={autoAdvancing}
+                  disabled={autoAdvancing}
+                >
+                  {autoAdvancing ? 'Clicking Sign In...' : '➡️ Click Sign In'}
+                </Button>
+                <p className="text-xs text-gray-500 text-center -mt-1">
+                  Manually trigger one Sign In button click.
                 </p>
 
                 {/* Optional - Analyze Job */}
