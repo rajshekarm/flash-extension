@@ -441,6 +441,54 @@ function isSignInLabel(label: string): boolean {
   return label.includes("sign in") || label.includes("log in") || label.includes("login")
 }
 
+function isAccountCreationLabel(label: string): boolean {
+  return (
+    label.includes("sign up") ||
+    label.includes("signup") ||
+    label.includes("create account") ||
+    label.includes("register")
+  )
+}
+
+function isContinueLabel(label: string): boolean {
+  return label.includes("continue") || label.includes("save and continue")
+}
+
+function getNavigationSignature(): string {
+  const headingText =
+    document.querySelector("h1, h2, [data-automation-id*='pageHeader'], [data-automation-id*='title']")?.textContent ||
+    ""
+  return `${window.location.pathname}|${normalizeText(headingText)}|${normalizeText(document.title || "")}`
+}
+
+function getVisiblePageError(): string | null {
+  const selectors = [
+    '[role="alert"]',
+    '[aria-live="assertive"]',
+    '.error',
+    '.errors',
+    '[data-automation-id*="error"]',
+    '[id*="error"]'
+  ]
+
+  for (const selector of selectors) {
+    const elements = document.querySelectorAll(selector)
+    for (const el of elements) {
+      if (!(el instanceof HTMLElement)) continue
+      if (!isElementVisible(el)) continue
+      const text = (el.textContent || "").trim()
+      if (text) return text
+    }
+  }
+
+  const pageText = (document.body?.textContent || "").toLowerCase()
+  if (pageText.includes("something went wrong")) {
+    return "Something went wrong"
+  }
+
+  return null
+}
+
 function findActionButton(primaryForm: any, intent: "advance" | "signin"): HTMLElement | null {
   const scopedRoot = (primaryForm?.element as ParentNode) || document
   const candidates = scopedRoot.querySelectorAll(
@@ -453,13 +501,13 @@ function findActionButton(primaryForm: any, intent: "advance" | "signin"): HTMLE
     if (!isButtonEnabled(candidate)) continue
     const label = getElementLabel(candidate)
     if (intent === "signin") {
-      if (!isSignInLabel(label)) continue
+      if (!isSignInLabel(label) && !isAccountCreationLabel(label)) continue
       return candidate
     }
-
-    // Keep advance logic simple: first visible enabled button in the active form.
+    if (!isContinueLabel(label) && !isSignInLabel(label) && !isAccountCreationLabel(label)) continue
     bestMatch = candidate
-    return candidate
+    if (label.includes("save and continue")) return candidate
+    if (label.includes("continue")) return candidate
   }
 
   return bestMatch
@@ -469,18 +517,34 @@ async function autoAdvanceToNextStep(primaryForm: any) {
   console.log("[AutoAdvance] called")
   const button = findActionButton(primaryForm, "advance")
   if (!button) {
-    return { clicked: false, moved: false, reason: "No clickable button found" }
+    return { clicked: false, moved: false, reason: "No eligible action button found (sign in/continue/save and continue)" }
   }
 
   const buttonLabel = getElementLabel(button)
+  const signatureBefore = getNavigationSignature()
 
   try {
     button.scrollIntoView({ block: "center", behavior: "smooth" })
     await sleep(150)
     button.click()
     console.log("[Flash Content] Auto-advance clicked:", buttonLabel)
-    await sleep(2000)
-    return { clicked: true, moved: true, reason: "Clicked and waited for navigation", buttonLabel }
+
+    // For all labeled actions, wait for transition and capture visible errors.
+    const maxChecks = isSignInLabel(buttonLabel) ? 32 : 24 // ~8s vs ~6s
+    for (let i = 0; i < maxChecks; i++) {
+      await sleep(250)
+      const errorText = getVisiblePageError()
+      if (errorText) {
+        return { clicked: true, moved: false, reason: `Action error: ${errorText}`, buttonLabel }
+      }
+
+      const signatureNow = getNavigationSignature()
+      if (signatureNow !== signatureBefore) {
+        return { clicked: true, moved: true, reason: "Navigated after action click", buttonLabel }
+      }
+    }
+
+    return { clicked: true, moved: false, reason: "Timed out waiting for navigation", buttonLabel }
   } catch (error) {
     return {
       clicked: false,
