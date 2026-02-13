@@ -443,10 +443,32 @@ export class FormDetector {
    * Extract label for a field
    */
   private extractLabel(element: HTMLElement): string {
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').replace(/\*/g, '').trim();
+    const isUseful = (value: string) => {
+      const v = normalize(value).toLowerCase();
+      if (!v) return false;
+      if (v === 'required' || v === 'optional') return false;
+      if (v === 'select one' || v === 'select one required' || v === 'no required') return false;
+      if (v.startsWith('select one')) return false;
+      return true;
+    };
+
+    // Try aria-labelledby first (common for custom Workday controls)
+    const ariaLabelledBy = element.getAttribute('aria-labelledby');
+    if (ariaLabelledBy) {
+      const ariaText = ariaLabelledBy
+        .split(/\s+/)
+        .map((id) => document.getElementById(id)?.textContent?.trim() || '')
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      if (isUseful(ariaText)) return normalize(ariaText);
+    }
+
     // Try to find associated label
     if (element.id) {
       const label = document.querySelector(`label[for="${element.id}"]`);
-      if (label) return label.textContent?.trim() || '';
+      if (label?.textContent && isUseful(label.textContent)) return normalize(label.textContent);
     }
 
     // Try parent label
@@ -455,16 +477,38 @@ export class FormDetector {
       const clone = parentLabel.cloneNode(true) as HTMLElement;
       const input = clone.querySelector('input, textarea, select');
       if (input) input.remove();
-      return clone.textContent?.trim() || '';
+      const parentText = clone.textContent?.trim() || '';
+      if (isUseful(parentText)) return normalize(parentText);
+    }
+
+    // Try fieldset legend (question groups)
+    const fieldset = element.closest('fieldset');
+    const legend = fieldset?.querySelector('legend');
+    if (legend?.textContent && isUseful(legend.textContent)) {
+      return normalize(legend.textContent);
+    }
+
+    // Try nearest prompt/question text in the same container
+    const questionContainer =
+      element.closest('[data-automation-id*="question"]') ||
+      element.closest('[data-automation-id*="formField"]') ||
+      element.closest('[role="group"]') ||
+      element.parentElement;
+    if (questionContainer instanceof HTMLElement) {
+      const promptCandidate = questionContainer.querySelector(
+        'label, [data-automation-id*="label"], [data-automation-id*="prompt"], [id*="label"], [id*="prompt"], p, h3, h4, span'
+      ) as HTMLElement | null;
+      const promptText = promptCandidate?.textContent?.trim() || '';
+      if (isUseful(promptText)) return normalize(promptText);
     }
 
     // Try aria-label
     const ariaLabel = element.getAttribute('aria-label');
-    if (ariaLabel) return ariaLabel;
+    if (ariaLabel && isUseful(ariaLabel)) return normalize(ariaLabel);
 
     // Try placeholder as fallback
     const placeholder = element.getAttribute('placeholder');
-    if (placeholder) return placeholder;
+    if (placeholder && isUseful(placeholder)) return normalize(placeholder);
 
     // Try name attribute
     if ('name' in element && element.name) {
