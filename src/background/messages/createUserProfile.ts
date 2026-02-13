@@ -3,16 +3,13 @@ import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
 import { flashSyncStorage, flashStorage } from '~lib/storage/chrome';
 import { apiClient } from '~lib/api/client';
+import type { UserProfile } from '~types';
 
 interface CreateProfileRequest {
-  profile: {
-    id?: string;
+  profile: Partial<UserProfile> & {
     name: string;
     email: string;
-    phone?: string;
-    skills: string[];
-    experience?: any[];
-    education?: any[];
+    skills?: string[];
   };
 }
 

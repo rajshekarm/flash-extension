@@ -16,8 +16,6 @@ export class FormDetector {
   detectForms(): FormMetadata | null {
     const forms = document.querySelectorAll('form');
     console.log("detected forms are", forms)
-    if (forms.length === 0) return null;
-
     const detectedForms: DetectedForm[] = [];
 
     forms.forEach((form) => {
@@ -41,6 +39,14 @@ export class FormDetector {
       }
     });
 
+    // Fallback: many SPA flows (e.g. Workday) render inputs without a <form> wrapper.
+    if (detectedForms.length === 0) {
+      const virtualForm = this.detectVirtualForm();
+      if (virtualForm) {
+        detectedForms.push(virtualForm);
+      }
+    }
+
     if (detectedForms.length === 0) return null;
 
     return {
@@ -50,6 +56,50 @@ export class FormDetector {
       company: this.extractCompanyName(),
       detectedAt: new Date().toISOString(),
       forms: detectedForms,
+    };
+  }
+
+  /**
+   * Detect form-like containers when no native <form> exists
+   */
+  private detectVirtualForm(): DetectedForm | null {
+    const selectors = ['main', '[role="main"]', '[role="form"]', 'section', 'article', 'div'];
+    const candidates: HTMLElement[] = [];
+
+    selectors.forEach((selector) => {
+      document.querySelectorAll(selector).forEach((el) => {
+        if (el instanceof HTMLElement) {
+          candidates.push(el);
+        }
+      });
+    });
+
+    let bestContainer: HTMLElement | null = null;
+    let bestFieldCount = 0;
+
+    for (const container of candidates) {
+      // Skip tiny/utility containers quickly
+      if ((container.textContent || '').trim().length < 20) continue;
+      const fields = container.querySelectorAll('input, textarea, select');
+      if (fields.length > bestFieldCount) {
+        bestFieldCount = fields.length;
+        bestContainer = container;
+      }
+    }
+
+    if (!bestContainer || bestFieldCount < 2) return null;
+
+    const score = this.scoreContainer(bestContainer);
+    const fields = this.extractFields(bestContainer);
+    if (fields.length === 0) return null;
+
+    return {
+      element: bestContainer as unknown as HTMLFormElement,
+      action: window.location.href,
+      method: 'post',
+      fields,
+      submitButton: this.findSubmitButton(bestContainer),
+      score: score.score,
     };
   }
 
@@ -147,9 +197,97 @@ export class FormDetector {
   }
 
   /**
+   * Score non-form containers with the same heuristic
+   */
+  private scoreContainer(container: Element): FormScore {
+    let score = 0;
+    const reasons: string[] = [];
+    const indicators = {
+      hasResumeUpload: false,
+      hasTextArea: false,
+      hasWorkHistory: false,
+      hasKeywords: false,
+      fieldCount: 0,
+    };
+
+    const html = container.innerHTML.toLowerCase();
+    const formText = container.textContent?.toLowerCase() || '';
+
+    const fileInputs = container.querySelectorAll('input[type="file"]');
+    if (fileInputs.length > 0) {
+      indicators.hasResumeUpload = true;
+      score += 0.3;
+      reasons.push('Has file upload field');
+    }
+
+    const textareas = container.querySelectorAll('textarea');
+    if (textareas.length > 0) {
+      indicators.hasTextArea = true;
+      score += 0.2;
+      reasons.push('Has textarea fields');
+    }
+
+    const keywords = [
+      'apply',
+      'application',
+      'resume',
+      'cv',
+      'cover letter',
+      'experience',
+      'education',
+      'qualification',
+      'employment',
+      'career',
+      'job application',
+      'submit application',
+    ];
+
+    const foundKeywords = keywords.filter(
+      (keyword) => html.includes(keyword) || formText.includes(keyword)
+    );
+
+    if (foundKeywords.length > 0) {
+      indicators.hasKeywords = true;
+      score += Math.min(foundKeywords.length * 0.1, 0.3);
+      reasons.push(`Contains keywords: ${foundKeywords.join(', ')}`);
+    }
+
+    const workHistoryKeywords = ['company', 'employer', 'job title', 'position'];
+    const hasWorkHistory = workHistoryKeywords.some(
+      (keyword) => html.includes(keyword) || formText.includes(keyword)
+    );
+
+    if (hasWorkHistory) {
+      indicators.hasWorkHistory = true;
+      score += 0.15;
+      reasons.push('Contains work history fields');
+    }
+
+    const inputs = container.querySelectorAll('input, textarea, select');
+    indicators.fieldCount = inputs.length;
+
+    if (inputs.length >= 5) {
+      score += 0.1;
+      reasons.push(`Has ${inputs.length} form fields`);
+    }
+
+    if (inputs.length >= 10) {
+      score += 0.1;
+      reasons.push('Has many form fields (likely application)');
+    }
+
+    return {
+      isApplicationForm: score >= 0.5,
+      score: Math.min(score, 1.0),
+      reasons,
+      indicators,
+    };
+  }
+
+  /**
    * Extract all fields from a form
    */
-  private extractFields(form: HTMLFormElement): DetectedFormField[] {
+  private extractFields(form: ParentNode): DetectedFormField[] {
     const fields: DetectedFormField[] = [];
     const fieldElements = form.querySelectorAll('input, textarea, select');
 
@@ -292,7 +430,7 @@ export class FormDetector {
   /**
    * Find submit button in form
    */
-  private findSubmitButton(form: HTMLFormElement): HTMLButtonElement | undefined {
+  private findSubmitButton(form: ParentNode): HTMLButtonElement | undefined {
     // Look for button with type="submit"
     const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
     if (submitBtn) return submitBtn;

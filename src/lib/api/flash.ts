@@ -146,7 +146,7 @@ export class FlashAPI {
   /**
    * Create a new user profile
    */
-  async createUserProfile(profile: UserProfile): Promise<UserProfile> {
+  async createUserProfile(profile: Partial<UserProfile>): Promise<UserProfile> {
     const response = await apiClient.getClient()!.post('/api/flash/user-profile', profile);
     return response.data;
   }
@@ -154,7 +154,7 @@ export class FlashAPI {
   /**
    * Update an existing user profile
    */
-  async updateUserProfile(userId: string, profile: UserProfile): Promise<UserProfile> {
+  async updateUserProfile(userId: string, profile: Partial<UserProfile>): Promise<UserProfile> {
     const response = await apiClient.getClient()!.put(`/api/flash/user-profile/${userId}`, profile);
     return response.data;
   }
