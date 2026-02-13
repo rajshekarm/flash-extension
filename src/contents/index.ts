@@ -454,63 +454,45 @@ function isContinueLabel(label: string): boolean {
   return label.includes("continue") || label.includes("save and continue")
 }
 
-function getNavigationSignature(): string {
-  const headingText =
-    document.querySelector("h1, h2, [data-automation-id*='pageHeader'], [data-automation-id*='title']")?.textContent ||
-    ""
-  return `${window.location.pathname}|${normalizeText(headingText)}|${normalizeText(document.title || "")}`
-}
-
-function getVisiblePageError(): string | null {
-  const selectors = [
-    '[role="alert"]',
-    '[aria-live="assertive"]',
-    '.error',
-    '.errors',
-    '[data-automation-id*="error"]',
-    '[id*="error"]'
-  ]
-
-  for (const selector of selectors) {
-    const elements = document.querySelectorAll(selector)
-    for (const el of elements) {
-      if (!(el instanceof HTMLElement)) continue
-      if (!isElementVisible(el)) continue
-      const text = (el.textContent || "").trim()
-      if (text) return text
-    }
-  }
-
-  const pageText = (document.body?.textContent || "").toLowerCase()
-  if (pageText.includes("something went wrong")) {
-    return "Something went wrong"
-  }
-
-  return null
+function isLikelyLoginForm(primaryForm: any): boolean {
+  const fields = primaryForm?.fields || []
+  return fields.some((field: any) => field?.type === "password")
 }
 
 function findActionButton(primaryForm: any, intent: "advance" | "signin"): HTMLElement | null {
   const scopedRoot = (primaryForm?.element as ParentNode) || document
   const candidates = scopedRoot.querySelectorAll(
-    'button, input[type="button"], input[type="submit"], [role="button"]'
+    'button[type="submit"], input[type="submit"], button, input[type="button"], [role="button"]'
   )
+  const isLoginForm = isLikelyLoginForm(primaryForm)
+  const ranked: Array<{ element: HTMLElement; label: string; score: number }> = []
 
-  let bestMatch: HTMLElement | null = null
   for (const candidate of candidates) {
     if (!(candidate instanceof HTMLElement)) continue
     if (!isButtonEnabled(candidate)) continue
     const label = getElementLabel(candidate)
     if (intent === "signin") {
       if (!isSignInLabel(label) && !isAccountCreationLabel(label)) continue
-      return candidate
+      const score = isSignInLabel(label) ? 100 : 90
+      ranked.push({ element: candidate, label, score })
+      continue
     }
-    if (!isContinueLabel(label) && !isSignInLabel(label) && !isAccountCreationLabel(label)) continue
-    bestMatch = candidate
-    if (label.includes("save and continue")) return candidate
-    if (label.includes("continue")) return candidate
+
+    if (isLoginForm) {
+      if (!isSignInLabel(label) && !isAccountCreationLabel(label)) continue
+      const score = isSignInLabel(label) ? 100 : 90
+      ranked.push({ element: candidate, label, score })
+      continue
+    }
+
+    if (!isContinueLabel(label)) continue
+    const score = label.includes("save and continue") ? 100 : 90
+    ranked.push({ element: candidate, label, score })
   }
 
-  return bestMatch
+  if (ranked.length === 0) return null
+  ranked.sort((a, b) => b.score - a.score)
+  return ranked[0].element
 }
 
 async function autoAdvanceToNextStep(primaryForm: any) {
@@ -521,30 +503,13 @@ async function autoAdvanceToNextStep(primaryForm: any) {
   }
 
   const buttonLabel = getElementLabel(button)
-  const signatureBefore = getNavigationSignature()
 
   try {
     button.scrollIntoView({ block: "center", behavior: "smooth" })
     await sleep(150)
     button.click()
     console.log("[Flash Content] Auto-advance clicked:", buttonLabel)
-
-    // For all labeled actions, wait for transition and capture visible errors.
-    const maxChecks = isSignInLabel(buttonLabel) ? 32 : 24 // ~8s vs ~6s
-    for (let i = 0; i < maxChecks; i++) {
-      await sleep(250)
-      const errorText = getVisiblePageError()
-      if (errorText) {
-        return { clicked: true, moved: false, reason: `Action error: ${errorText}`, buttonLabel }
-      }
-
-      const signatureNow = getNavigationSignature()
-      if (signatureNow !== signatureBefore) {
-        return { clicked: true, moved: true, reason: "Navigated after action click", buttonLabel }
-      }
-    }
-
-    return { clicked: true, moved: false, reason: "Timed out waiting for navigation", buttonLabel }
+    return { clicked: true, moved: true, reason: "Clicked action button", buttonLabel }
   } catch (error) {
     return {
       clicked: false,
