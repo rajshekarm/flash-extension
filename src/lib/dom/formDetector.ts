@@ -291,10 +291,17 @@ export class FormDetector {
    */
   private extractFields(form: ParentNode): DetectedFormField[] {
     const fields: DetectedFormField[] = [];
-    const fieldElements = form.querySelectorAll('input, textarea, select');
+    const fieldElements = form.querySelectorAll(
+      'input, textarea, select, [role="combobox"], [aria-haspopup="listbox"]'
+    );
+    const seen = new Set<HTMLElement>();
 
     fieldElements.forEach((element) => {
-      const field = this.extractField(element as HTMLElement);
+      const htmlElement = element as HTMLElement;
+      if (seen.has(htmlElement)) return;
+      seen.add(htmlElement);
+
+      const field = this.extractField(htmlElement);
       if (field && !this.shouldSkipField(field)) {
         fields.push(field);
       }
@@ -307,27 +314,43 @@ export class FormDetector {
    * Extract information from a single field
    */
   private extractField(element: HTMLElement): DetectedFormField | null {
-    if (!(element instanceof HTMLInputElement || 
-          element instanceof HTMLTextAreaElement || 
-          element instanceof HTMLSelectElement)) {
+    if (
+      !(
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement
+      ) &&
+      !this.isCustomSelectElement(element)
+    ) {
       return null;
     }
 
-    const id = element.id || element.name || generateId();
-    const name = element.name || element.id || '';
+    const inputName =
+      element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement
+        ? element.name
+        : '';
+    const id = element.id || inputName || element.getAttribute('name') || generateId();
+    const name =
+      inputName ||
+      element.getAttribute('name') ||
+      element.getAttribute('data-automation-id') ||
+      element.id ||
+      '';
     const label = this.extractLabel(element);
     const type = this.determineFieldType(element);
     const required = element.hasAttribute('required') || element.getAttribute('aria-required') === 'true';
-    const placeholder = element.getAttribute('placeholder') || '';
+    const placeholder = element.getAttribute('placeholder') || element.getAttribute('aria-placeholder') || '';
 
     // Extract options for select/radio fields
     let options: SelectOption[] | undefined;
     if (element instanceof HTMLSelectElement) {
       options = this.extractSelectOptions(element);
+    } else if (type === 'select') {
+      options = this.extractCustomSelectOptions(element);
     }
 
     // Extract current value
-    const value = 'value' in element ? element.value : '';
+    const value = this.extractFieldValue(element);
 
     // Extract validation rules
     const validation = {
@@ -368,6 +391,10 @@ export class FormDetector {
       return 'textarea';
     }
 
+    if (this.isCustomSelectElement(element)) {
+      return 'select';
+    }
+
     if (element instanceof HTMLSelectElement) {
       return 'select';
     }
@@ -377,6 +404,39 @@ export class FormDetector {
     }
 
     return 'text';
+  }
+
+  private isCustomSelectElement(element: HTMLElement): boolean {
+    const role = element.getAttribute('role')?.toLowerCase();
+    const ariaHasPopup = element.getAttribute('aria-haspopup')?.toLowerCase();
+    const automationId = element.getAttribute('data-automation-id')?.toLowerCase() || '';
+    const className = element.className?.toString().toLowerCase() || '';
+
+    if (role === 'combobox' || role === 'listbox') return true;
+    if (ariaHasPopup === 'listbox') return true;
+    if (automationId.includes('select') || automationId.includes('dropdown')) return true;
+    if (className.includes('combobox') || className.includes('dropdown')) return true;
+
+    return false;
+  }
+
+  private extractFieldValue(
+    element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement
+  ): string {
+    if (
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLSelectElement
+    ) {
+      return element.value || '';
+    }
+
+    return (
+      element.getAttribute('aria-valuetext') ||
+      element.getAttribute('aria-label') ||
+      element.textContent?.trim() ||
+      ''
+    );
   }
 
   /**
@@ -426,6 +486,42 @@ export class FormDetector {
         selected: option.selected,
       });
     });
+    return options;
+  }
+
+  private extractCustomSelectOptions(element: HTMLElement): SelectOption[] {
+    const options: SelectOption[] = [];
+    const controlsId = element.getAttribute('aria-controls');
+
+    let optionElements: HTMLElement[] = [];
+    if (controlsId) {
+      const controlled = document.getElementById(controlsId);
+      if (controlled) {
+        optionElements = Array.from(controlled.querySelectorAll('[role="option"], option')) as HTMLElement[];
+      }
+    }
+
+    if (optionElements.length === 0) {
+      optionElements = Array.from(
+        document.querySelectorAll('[role="option"], [data-automation-id*="option"], option')
+      ) as HTMLElement[];
+    }
+
+    const selectedText = this.extractFieldValue(element).toLowerCase();
+
+    optionElements.forEach((opt, index) => {
+      const label = opt.textContent?.trim() || opt.getAttribute('aria-label') || '';
+      if (!label) return;
+      options.push({
+        value: opt.getAttribute('data-value') || label,
+        label,
+        selected:
+          opt.getAttribute('aria-selected') === 'true' ||
+          label.toLowerCase() === selectedText ||
+          index === 0,
+      });
+    });
+
     return options;
   }
 
@@ -484,6 +580,15 @@ export class FormDetector {
     // Skip fields with certain names (CSRF tokens, etc.)
     const skipNames = ['csrf', 'token', '_method', 'authenticity_token'];
     if (skipNames.some((name) => field.name.toLowerCase().includes(name))) {
+      return true;
+    }
+
+    // Skip anonymous helper controls from custom widgets
+    const generatedIdPattern = /^\d{10,}-[a-z0-9]{6,}$/i;
+    const hasAnonymousId = generatedIdPattern.test(field.id) && !field.name;
+    const hasNoLabelOrPlaceholder =
+      (!field.label || field.label === 'Unnamed Field') && !field.placeholder;
+    if (hasAnonymousId && hasNoLabelOrPlaceholder) {
       return true;
     }
 
