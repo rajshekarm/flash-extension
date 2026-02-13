@@ -1,16 +1,17 @@
 // Message handler for answering a single question
 import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
-import type { QuestionContext } from '~types';
+import type { QuestionContext, UserProfile } from '~types';
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
   console.log('[answerQuestion] Received request');
 
   try {
-    const { questionContext, userId, jobId } = req.body as {
+    const { questionContext, userId, jobId, userProfile } = req.body as {
       questionContext: QuestionContext;
       userId: string;
       jobId?: string;
+      userProfile?: Partial<UserProfile>;
     };
 
     if (!questionContext || !userId) {
@@ -18,7 +19,7 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
     }
 
     // Call Flash API to generate answer
-    const answer = await flashAPI.answerQuestion(questionContext, userId, jobId);
+    const answer = await flashAPI.answerQuestion(questionContext, userId, jobId, userProfile);
 
     console.log('[answerQuestion] Answer generated with confidence:', answer.confidence);
 

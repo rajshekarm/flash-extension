@@ -39,12 +39,15 @@ export class FlashAPI {
   /**
    * Analyze a job description
    */
-  async analyzeJob(jobDescription: JobDescription, userId?: string): Promise<JobAnalysis> {
-    const response = await apiClient.getClient()!.post('/api/flash/analyze-job', {
+  async analyzeJob(
+    jobDescription: JobDescription,
+    userId?: string,
+    userProfile?: Partial<UserProfile>
+  ): Promise<JobAnalysis> {
+    return await this.postWithOptionalProfile('/api/flash/analyze-job', {
       job_description: jobDescription,
       user_id: userId,
-    });
-    return response.data;
+    }, userProfile);
   }
 
   /**
@@ -53,14 +56,14 @@ export class FlashAPI {
   async tailorResume(
     jobId: string,
     userId: string,
-    jobAnalysis?: JobAnalysis
+    jobAnalysis?: JobAnalysis,
+    userProfile?: Partial<UserProfile>
   ): Promise<TailoredResume> {
-    const response = await apiClient.getClient()!.post('/api/flash/tailor-resume', {
+    return await this.postWithOptionalProfile('/api/flash/tailor-resume', {
       job_id: jobId,
       user_id: userId,
       job_analysis: jobAnalysis,
-    });
-    return response.data;
+    }, userProfile);
   }
 
   /**
@@ -69,14 +72,14 @@ export class FlashAPI {
   async answerQuestion(
     questionContext: QuestionContext,
     userId: string,
-    jobId?: string
+    jobId?: string,
+    userProfile?: Partial<UserProfile>
   ): Promise<Answer> {
-    const response = await apiClient.getClient()!.post('/api/flash/answer-question', {
+    return await this.postWithOptionalProfile('/api/flash/answer-question', {
       question_context: questionContext,
       user_id: userId,
       job_id: jobId,
-    });
-    return response.data;
+    }, userProfile);
   }
 
   /**
@@ -98,7 +101,8 @@ export class FlashAPI {
   async fillApplication(
     formFields: FormField[],
     userId: string,
-    jobId?: string
+    jobId?: string,
+    userProfile?: Partial<UserProfile>
   ): Promise<{ answers: Answer[]; overall_confidence: number }> {
     console.log("request to fill the application")
 
@@ -111,12 +115,11 @@ export class FlashAPI {
       options: field.options ?? [],
     }));
 
-    const response = await apiClient.getClient()!.post('/api/flash/fill-application-form', {
+    return await this.postWithOptionalProfile('/api/flash/fill-application-form', {
       form_fields: legacyFormFields,
       user_id: userId,
       job_id: jobId,
-    });
-    return response.data;
+    }, userProfile);
   }
 
   /**
@@ -125,14 +128,36 @@ export class FlashAPI {
   async approveApplication(
     applicationId: string,
     userId: string,
-    approvedAnswers: Answer[]
+    approvedAnswers: Answer[],
+    userProfile?: Partial<UserProfile>
   ): Promise<{ application_id: string; status: string }> {
-    const response = await apiClient.getClient()!.post('/api/flash/approve-application', {
+    return await this.postWithOptionalProfile('/api/flash/approve-application', {
       application_id: applicationId,
       user_id: userId,
       approved_answers: approvedAnswers,
-    });
-    return response.data;
+    }, userProfile);
+  }
+
+  private async postWithOptionalProfile<T>(
+    url: string,
+    payload: Record<string, any>,
+    userProfile?: Partial<UserProfile>
+  ): Promise<T> {
+    const client = apiClient.getClient()!
+    const body = userProfile ? { ...payload, user_profile: userProfile } : payload
+
+    try {
+      const response = await client.post(url, body)
+      return response.data
+    } catch (error: any) {
+      const status = error?.response?.status
+      if (userProfile && (status === 400 || status === 422)) {
+        console.warn(`[FlashAPI] ${url} rejected user_profile, retrying without profile context`, { status })
+        const retryResponse = await client.post(url, payload)
+        return retryResponse.data
+      }
+      throw error
+    }
   }
 
   /**

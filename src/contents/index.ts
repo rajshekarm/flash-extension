@@ -176,7 +176,8 @@ async function analyzeJob() {
       name: "analyzeJob",
       body: { 
         jobDescription,
-        userId: userProfile?.id 
+        userId: userProfile?.id,
+        userProfile
       }
     })
     
@@ -270,7 +271,8 @@ async function fillApplication(fieldIdFilter?: Set<string>) {
       body: {
         formFields,
         userId: userProfile.user_id,
-        jobId
+        jobId,
+        userProfile
       }
     })
 
