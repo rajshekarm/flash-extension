@@ -397,6 +397,8 @@ export class FormDetector {
       options = this.extractSelectOptions(element);
     } else if (type === 'select') {
       options = this.extractCustomSelectOptions(element);
+    } else if (type === 'radio' && element instanceof HTMLInputElement) {
+      options = this.extractRadioOptions(element);
     }
 
     // Extract current value
@@ -596,24 +598,56 @@ export class FormDetector {
   private extractCustomSelectOptions(element: HTMLElement): SelectOption[] {
     const options: SelectOption[] = [];
     const controlsId = element.getAttribute('aria-controls');
+    const ariaOwns = element.getAttribute('aria-owns');
+    const listId = element.getAttribute('list');
 
     let optionElements: HTMLElement[] = [];
     if (controlsId) {
-      const controlled = document.getElementById(controlsId);
-      if (controlled) {
-        optionElements = Array.from(controlled.querySelectorAll('[role="option"], option')) as HTMLElement[];
+      controlsId.split(/\s+/).forEach((id) => {
+        const controlled = document.getElementById(id);
+        if (controlled) {
+          optionElements.push(
+            ...(Array.from(controlled.querySelectorAll('[role="option"], option')) as HTMLElement[])
+          );
+        }
+      });
+    }
+
+    if (optionElements.length === 0 && ariaOwns) {
+      ariaOwns.split(/\s+/).forEach((id) => {
+        const owned = document.getElementById(id);
+        if (owned) {
+          optionElements.push(
+            ...(Array.from(owned.querySelectorAll('[role="option"], option')) as HTMLElement[])
+          );
+        }
+      });
+    }
+
+    if (optionElements.length === 0 && listId) {
+      const dataList = document.getElementById(listId);
+      if (dataList) {
+        optionElements.push(...(Array.from(dataList.querySelectorAll('option')) as HTMLElement[]));
       }
     }
 
     if (optionElements.length === 0) {
-      optionElements = Array.from(
-        document.querySelectorAll('[role="option"], [data-automation-id*="option"], option')
-      ) as HTMLElement[];
+      const localContainer =
+        element.closest('[data-automation-id*="question"]') ||
+        element.closest('[data-automation-id*="formField"]') ||
+        element.closest('[role="group"]') ||
+        element.parentElement;
+
+      if (localContainer instanceof HTMLElement) {
+        optionElements = Array.from(
+          localContainer.querySelectorAll('[role="option"], [data-automation-id*="option"], option')
+        ) as HTMLElement[];
+      }
     }
 
     const selectedText = this.extractFieldValue(element).toLowerCase();
 
-    optionElements.forEach((opt, index) => {
+    optionElements.forEach((opt) => {
       const label = opt.textContent?.trim() || opt.getAttribute('aria-label') || '';
       if (!label) return;
       options.push({
@@ -622,7 +656,35 @@ export class FormDetector {
         selected:
           opt.getAttribute('aria-selected') === 'true' ||
           label.toLowerCase() === selectedText ||
-          index === 0,
+          opt.getAttribute('selected') !== null,
+      });
+    });
+
+    // De-duplicate noisy custom-widget options by value/label pair.
+    const seen = new Set<string>();
+    return options.filter((opt) => {
+      const key = `${opt.value}::${opt.label}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  private extractRadioOptions(radio: HTMLInputElement): SelectOption[] {
+    const options: SelectOption[] = [];
+    const groupName = radio.name;
+    if (!groupName) return options;
+
+    const radios = document.querySelectorAll(
+      `input[type="radio"][name="${groupName}"]`
+    ) as NodeListOf<HTMLInputElement>;
+
+    radios.forEach((item) => {
+      const label = this.extractLabel(item);
+      options.push({
+        value: item.value || label,
+        label,
+        selected: item.checked,
       });
     });
 
