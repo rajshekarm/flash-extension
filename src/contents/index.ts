@@ -37,6 +37,7 @@ const fieldInjector = new FieldInjector()
 
 let latestJobInfo: ExtractedJobInfo | null = null
 let latestForms: FormMetadata | null = null
+let latestFormQuestions: ApplicationQuestion[] = []
 let statusIndicator: HTMLDivElement | null = null
 let autoFillEnabled = false
 let isProcessingForm = false
@@ -357,6 +358,75 @@ function toFormQuestions(primaryForm: any, fieldIdFilter?: Set<string>): Applica
   return questions
 }
 
+function normalizeComparableText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+function getQuestionByAnswer(
+  answer: Answer,
+  questionById: Map<string, ApplicationQuestion>,
+  questionByPrompt: Map<string, ApplicationQuestion>
+): ApplicationQuestion | null {
+  if (answer.question_id && questionById.has(answer.question_id)) {
+    return questionById.get(answer.question_id) || null
+  }
+
+  const answerPrompt = normalizeComparableText(answer.question || "")
+  if (answerPrompt && questionByPrompt.has(answerPrompt)) {
+    return questionByPrompt.get(answerPrompt) || null
+  }
+
+  return null
+}
+
+function resolveTargetFieldIdsForAnswer(answer: Answer, primaryForm: any): string[] {
+  if (answer.field_id) return [answer.field_id]
+  if (answer.field_ids && answer.field_ids.length > 0) return answer.field_ids
+
+  const questionById = new Map<string, ApplicationQuestion>()
+  const questionByPrompt = new Map<string, ApplicationQuestion>()
+  latestFormQuestions.forEach((question) => {
+    questionById.set(question.question_id, question)
+    questionByPrompt.set(normalizeComparableText(question.prompt), question)
+  })
+
+  const question = getQuestionByAnswer(answer, questionById, questionByPrompt)
+  if (!question) return []
+
+  if (question.question_type === "single_choice" && question.field_ids.length > 1) {
+    const target = normalizeComparableText(answer.answer || "")
+    const fields = primaryForm?.fields || []
+
+    for (const fieldId of question.field_ids) {
+      const matchedField = fields.find(
+        (field: any) =>
+          field.id === fieldId ||
+          field.name === fieldId
+      )
+      if (!matchedField) continue
+
+      const candidateLabel = normalizeComparableText(
+        matchedField.label || matchedField.value || matchedField.name || ""
+      )
+      const candidateValue = normalizeComparableText(
+        matchedField.value || matchedField.attributes?.value || ""
+      )
+
+      if (
+        target &&
+        (candidateLabel === target ||
+          candidateValue === target ||
+          candidateLabel.includes(target) ||
+          target.includes(candidateLabel))
+      ) {
+        return [fieldId]
+      }
+    }
+  }
+
+  return question.field_ids
+}
+
 async function fillApplication(fieldIdFilter?: Set<string>) {
   console.log("[Flash Content] fillApplication called")
 
@@ -379,6 +449,7 @@ async function fillApplication(fieldIdFilter?: Set<string>) {
   console.log(`[Flash Content] Processing form with ${primaryForm.fields.length} fields`)
 
   const formQuestions = toFormQuestions(primaryForm, fieldIdFilter)
+  latestFormQuestions = formQuestions
   if (formQuestions.length === 0) {
     return { success: false, error: "No target questions available for answer generation" }
   }
@@ -410,12 +481,13 @@ async function fillApplication(fieldIdFilter?: Set<string>) {
   }
 }
 
-function mapAnswersByFieldId(answers: Answer[]): Map<string, string> {
+function mapAnswersByFieldId(answers: Answer[], primaryForm: any): Map<string, string> {
   const answersMap = new Map<string, string>()
   answers.forEach((answer) => {
-    if (answer.field_id) {
-      answersMap.set(answer.field_id, answer.answer)
-    }
+    const targetFieldIds = resolveTargetFieldIdsForAnswer(answer, primaryForm)
+    targetFieldIds.forEach((fieldId) => {
+      answersMap.set(fieldId, answer.answer)
+    })
   })
   return answersMap
 }
@@ -654,6 +726,11 @@ async function fillApplicationWithValidationRetry() {
 
   const initialAnswers = initialFill.data?.answers || []
   initialAnswers.forEach((answer: Answer) => {
+    const targetFieldIds = resolveTargetFieldIdsForAnswer(answer, getPrimaryForm())
+    if (targetFieldIds.length > 0) {
+      targetFieldIds.forEach((fieldId) => allAnswers.set(fieldId, answer))
+      return
+    }
     if (answer.field_id) allAnswers.set(answer.field_id, answer)
   })
 
@@ -761,7 +838,7 @@ async function injectAnswers(answers: Answer[]) {
 
   updateStatus("injecting answers", true)
   const primaryForm = forms.forms[0]
-  const answersMap = mapAnswersByFieldId(answers)
+  const answersMap = mapAnswersByFieldId(answers, primaryForm)
   answersMap.forEach((_answer, fieldId) => {
     console.log("[Flash Content] Mapping answer for field:", fieldId)
   })

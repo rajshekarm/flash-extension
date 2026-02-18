@@ -137,7 +137,9 @@ export interface Answer {
   answer: string;
   confidence: number;
   sources: string[];
-  field_id: string;
+  field_id?: string;
+  question_id?: string;
+  field_ids?: string[];
 }
 
 export interface ApplicationData {
