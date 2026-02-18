@@ -1,99 +1,60 @@
 // Message handler for updating user profile
 import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
-import { flashSyncStorage } from '~lib/storage/chrome';
-import { parseUserProfileError } from '~lib/utils/userProfileErrors';
-// Helper function to timeout promises
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error(`Profile update timed out after ${timeoutMs}ms - check if backend is running`));
-    }, timeoutMs);
+import { flashSyncStorage, flashStorage } from '~lib/storage/chrome';
+import { apiClient } from '~lib/api/client';
+import type { UserProfile } from '~types';
 
-    promise
-      .then((result) => {
-        clearTimeout(timeout);
-        resolve(result);
-      })
-      .catch((error) => {
-        clearTimeout(timeout);
-        reject(error);
-      });
-  });
-}import type { UserProfile } from '~types';
+interface UpdateProfileRequest {
+  userId: string;
+  profile: Partial<UserProfile> & {
+    name: string;
+    email: string;
+    skills?: string[];
+  };
+}
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
-  console.log('[updateUserProfile] Received request', req.body);
+  console.log('[updateUserProfile] Starting profile update...');
 
   try {
-    const { userId, profile } = req.body as {
-      userId: string;
-      profile: UserProfile;
-    };
+    const { userId, profile } = req.body as UpdateProfileRequest;
 
-    if (!userId) {
-      throw new Error('User ID is required');
+    if (!userId || !profile || !profile.name || !profile.email) {
+      res.send({ success: false, error: 'User ID, name and email are required' });
+      return;
     }
 
-    if (!profile) {
-      throw new Error('User profile data is required');
+    // Make sure API client has auth token
+    const authToken = await flashStorage.get('authToken');
+    if (authToken) {
+      console.log('[updateUserProfile] Setting auth token in API client');
+      await apiClient.setAuthToken(authToken);
+    } else {
+      console.log('[updateUserProfile] No auth token found');
+      res.send({ success: false, error: 'Authentication required' });
+      return;
     }
 
-    if (!profile.name || !profile.email) {
-      throw new Error('Name and email are required fields');
-    }
+    console.log('[updateUserProfile] Calling backend API...');
+    const updatedProfile = await flashAPI.updateUserProfile(userId, profile);
 
-    console.log('[updateUserProfile] Calling Flash API...', {
-      userId,
-      name: profile.name,
-      email: profile.email,
-    });
+    // Store in sync storage as backup
+    await flashSyncStorage.set('userProfile', updatedProfile);
 
-    try {
-      // Try to update in backend first
-      console.log('[updateUserProfile] Updating profile with backend...');
-      const updatedProfile = await withTimeout(
-        flashAPI.updateUserProfile(userId, profile),
-        10000 // 10 second timeout for profile update
-      );
-      
-      // Update sync storage cache
-      await flashSyncStorage.set('userProfile', updatedProfile);
-      
-      console.log('[updateUserProfile] Profile updated in backend:', updatedProfile.id);
-      
-      res.send({
-        success: true,
-        data: updatedProfile,
-      });
-    } catch (backendError) {
-      console.warn('[updateUserProfile] Backend failed, updating local cache only:', backendError);
-      
-      // If backend fails, update local cache and mark for sync
-      const profileWithId = { ...profile, id: userId };
-      await flashSyncStorage.set('userProfile', profileWithId);
-      
-      const profileError = parseUserProfileError(backendError);
-      
-      res.send({
-        success: true,
-        data: profileWithId,
-        source: 'cache',
-        warning: profileError.type === 'NETWORK' ? 
-          'Profile saved locally. Will sync when backend is available.' :
-          `Profile saved locally: ${profileError.message}`,
-      });
-    }
+    console.log('[updateUserProfile] Profile updated successfully');
+    res.send({ success: true, data: updatedProfile });
+
   } catch (error) {
-    console.error('[updateUserProfile] Error:', error);
+    console.error('[updateUserProfile] Failed:', error);
     
-    const profileError = parseUserProfileError(error);
-
-    res.send({
-      success: false,
-      error: profileError.message,
-      errorType: profileError.type,
-    });
+    const errorMessage = error instanceof Error ? error.message : 'Profile update failed';
+    
+    if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+      res.send({ success: false, error: 'Authentication required' });
+    } else {
+      res.send({ success: false, error: errorMessage });
+    }
   }
 };
 

@@ -3,11 +3,6 @@ import { useState } from 'react';
 import { Button } from './Button';
 import { Input } from './Input';
 import { Card } from './Card';
-import { 
-  getUserFriendlyErrorMessage, 
-  getErrorActionSuggestions,
-  parseUserProfileError 
-} from '~lib/utils/userProfileErrors';
 import { register } from '~lib/storage/chrome';
 
 interface RegisterFormProps {
@@ -29,6 +24,7 @@ export function RegisterForm({ onRegisterSuccess, onShowLogin }: RegisterFormPro
     e.preventDefault();
     setError('');
     
+    // Basic validation
     if (!formData.name || !formData.email || !formData.password || !formData.confirmPassword) {
       setError('Please fill in all fields');
       return;
@@ -52,15 +48,24 @@ export function RegisterForm({ onRegisterSuccess, onShowLogin }: RegisterFormPro
         formData.password, 
         formData.confirmPassword
       );
+      
       onRegisterSuccess(authSession);
     } catch (error) {
-      console.error('[RegisterForm] Registration error:', error);
+      console.error('[RegisterForm] Registration failed:', error);
       
-      const authError = parseUserProfileError(error);
-      const friendlyMessage = getUserFriendlyErrorMessage(authError);
-      const suggestions = getErrorActionSuggestions(authError);
+      const errorMessage = error instanceof Error ? error.message : 'Registration failed';
       
-      setError(`${friendlyMessage}\n\nSuggestions:\n• ${suggestions.join('\n• ')}`);
+      // Simple error handling
+      if (errorMessage.toLowerCase().includes('already registered') || 
+          errorMessage.toLowerCase().includes('already exists')) {
+        setError('This email is already registered. Please try logging in instead.');
+      } else if (errorMessage.toLowerCase().includes('network') || 
+                 errorMessage.toLowerCase().includes('connection') ||
+                 errorMessage.toLowerCase().includes('unreachable')) {
+        setError('Cannot connect to server. Please check your connection and try again.');
+      } else {
+        setError(errorMessage);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -85,7 +90,6 @@ export function RegisterForm({ onRegisterSuccess, onShowLogin }: RegisterFormPro
           onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
           placeholder="Enter your full name"
           required
-          autoComplete="name"
         />
         
         <Input
@@ -95,7 +99,6 @@ export function RegisterForm({ onRegisterSuccess, onShowLogin }: RegisterFormPro
           onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
           placeholder="Enter your email"
           required
-          autoComplete="email"
         />
         
         <Input
@@ -105,7 +108,6 @@ export function RegisterForm({ onRegisterSuccess, onShowLogin }: RegisterFormPro
           onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
           placeholder="Create a password (6+ characters)"
           required
-          autoComplete="new-password"
         />
         
         <Input
@@ -115,12 +117,22 @@ export function RegisterForm({ onRegisterSuccess, onShowLogin }: RegisterFormPro
           onChange={(e) => setFormData(prev => ({ ...prev, confirmPassword: e.target.value }))}
           placeholder="Confirm your password"
           required
-          autoComplete="new-password"
         />
 
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-md p-3">
-            <p className="text-sm text-red-700 whitespace-pre-line">{error}</p>
+            <p className="text-sm text-red-700">{error}</p>
+            {error.includes('already registered') && (
+              <div className="mt-3">
+                <Button
+                  variant="secondary"
+                  onClick={onShowLogin}
+                  className="w-full text-sm"
+                >
+                  Switch to Login
+                </Button>
+              </div>
+            )}
           </div>
         )}
 

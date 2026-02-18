@@ -2,15 +2,16 @@
 import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
 import { flashStorage } from '~lib/storage/chrome';
-import type { JobDescription } from '~types';
+import type { JobDescription, UserProfile } from '~types';
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
   console.log('[analyzeJob] Received request', req.body);
 
   try {
-    const { jobDescription, userId } = req.body as {
+    const { jobDescription, userId, userProfile } = req.body as {
       jobDescription: JobDescription;
       userId?: string;
+      userProfile?: Partial<UserProfile>;
     };
 
     if (!jobDescription) {
@@ -23,7 +24,7 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
     });
 
     // Call Flash API to analyze job
-    const analysis = await flashAPI.analyzeJob(jobDescription, userId);
+    const analysis = await flashAPI.analyzeJob(jobDescription, userId, userProfile);
 
     // Store in session
     const session = await flashStorage.get('currentSession');

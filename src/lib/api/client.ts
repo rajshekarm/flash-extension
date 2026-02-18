@@ -49,9 +49,17 @@ class FlashAPIClient {
       },
     });
 
-    // Request interceptor - add auth headers
+    // Request interceptor - add auth headers and logging
     this.client.interceptors.request.use(
       (config) => {
+        // Log outgoing requests (excluding file uploads for cleaner logs)
+        const contentType = String(config.headers['Content-Type'] || '');
+        const isFileUpload = contentType.includes('multipart/form-data');
+        if (!isFileUpload) {
+          console.log(`[API Client] → ${config.method?.toUpperCase()} ${config.url}`, 
+            config.data ? { body: config.data } : '');
+        }
+
         // Prioritize JWT token over API key
         if (this.authToken) {
           config.headers.Authorization = `Bearer ${this.authToken}`;
@@ -60,13 +68,38 @@ class FlashAPIClient {
         }
         return config;
       },
-      (error) => Promise.reject(error)
+      (error) => {
+        console.error('[API Client] Request interceptor error:', error);
+        return Promise.reject(error);
+      }
     );
 
     // Response interceptor - handle errors and token refresh
     this.client.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        // Log successful responses (excluding large payloads)
+        const responseSize = JSON.stringify(response.data).length;
+        if (responseSize < 1000) {
+          console.log(`[API Client] ← ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`, 
+            { data: response.data });
+        } else {
+          console.log(`[API Client] ← ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`, 
+            `[${responseSize} chars]`);
+        }
+        return response;
+      },
       async (error: AxiosError) => {
+        // Log error responses
+        if (error.response) {
+          console.error(`[API Client] ← ${error.response.status} ${error.config?.method?.toUpperCase()} ${error.config?.url}`, 
+            { error: error.response.data });
+        } else if (error.request) {
+          console.error(`[API Client] ← NETWORK_ERROR ${error.config?.method?.toUpperCase()} ${error.config?.url}`, 
+            { message: 'No response received' });
+        } else {
+          console.error(`[API Client] ← REQUEST_ERROR`, error.message);
+        }
+
         if (error.response) {
           // Handle 401 Unauthorized - try token refresh
           if (error.response.status === 401 && this.authToken) {
@@ -87,14 +120,21 @@ class FlashAPIClient {
           }
           
           // Server responded with error
+          const responseData = error.response.data as any;
+          const errorMessage = responseData?.detail || 
+                              responseData?.message || 
+                              responseData?.error ||
+                              error.message ||
+                              `HTTP ${error.response.status} Error`;
+          
           throw new FlashAPIError(
             error.response.status,
-            error.message,
+            errorMessage,
             error.response.data
           );
         } else if (error.request) {
           // No response received
-          throw new FlashNetworkError('Backend is unreachable');
+          throw new FlashNetworkError('Backend is unreachable - check if server is running');
         } else {
           // Request setup error
           throw new Error(error.message);
@@ -190,7 +230,19 @@ class FlashAPIClient {
   async updateSettings(baseURL: string, apiKey: string) {
     this.baseURL = baseURL;
     this.apiKey = apiKey;
+    console.log('[API Client] Updated settings:', { baseURL, hasApiKey: !!apiKey });
     await this.initialize();
+  }
+
+  // Get current settings for debugging
+  getSettings() {
+    return {
+      baseURL: this.baseURL,
+      hasApiKey: !!this.apiKey,
+      hasAuthToken: !!this.authToken,
+      authToken: this.authToken, // Include actual token for debugging
+      hasClient: !!this.client
+    };
   }
 
   // Get the axios instance for custom requests

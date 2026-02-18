@@ -7,7 +7,7 @@ import { sendToBackground } from "@plasmohq/messaging"
 import { FormDetector } from "~lib/dom/formDetector"
 import { JobExtractor } from "~lib/dom/jobExtractor"
 import { FieldInjector } from "~lib/dom/fieldInjector"
-import { debounce } from "~lib/utils/helpers"
+import { debounce, sleep } from "~lib/utils/helpers"
 import { flashSyncStorage, flashStorage, getUserProfile, getCurrentAuthUser } from "~lib/storage/chrome"
 import type {
   Answer,
@@ -41,6 +41,7 @@ let autoFillEnabled = false
 let isProcessingForm = false
 let processedFormIds = new Set<string>()
 let lastFormDetectionTime = 0
+// const MAX_VALIDATION_RETRY_ROUNDS = 2
 
 function ensureStatusIndicator() {
   if (statusIndicator && document.body?.contains(statusIndicator)) return
@@ -175,7 +176,8 @@ async function analyzeJob() {
       name: "analyzeJob",
       body: { 
         jobDescription,
-        userId: userProfile?.id 
+        userId: userProfile?.id,
+        userProfile
       }
     })
     
@@ -192,70 +194,88 @@ async function analyzeJob() {
   }
 }
 
-async function  fillApplication() {
-  console.log("[Flash Content] fillApplication called")
-  
+function getPrimaryForm() {
   const forms = latestForms ?? detectForms()
-  if (!forms?.forms?.length) {
-    return { success: false, error: "No application form detected" }
-  }
+  if (!forms?.forms?.length) return null
+  return forms.forms[0]
+}
 
-  const currentUser = await getCurrentAuthUser();
-  const userProfile = currentUser ? await getUserProfile(currentUser.id) : null;
-  
- if (!userProfile?.id) {
-    return { success: false, error: "User profile not found. Please set up your profile in settings." }
-  }
-  // Get current session to retrieve job_id from analysis
-  const currentSession = await flashStorage.get("currentSession")
-  const jobId = currentSession?.currentJob?.job_id
+function normalizeFieldType(type: string): FormField["type"] {
+  if (type === "password") return "text"
 
+  const allowed: FormField["type"][] = [
+    "text",
+    "email",
+    "phone",
+    "textarea",
+    "select",
+    "radio",
+    "checkbox",
+    "file",
+    "date"
+  ]
 
- 
-  
-  console.log("[Flash Content] Session jobId:", jobId)
+  return allowed.includes(type as FormField["type"]) ? (type as FormField["type"]) : "text"
+}
 
-  const primaryForm = forms.forms[0]
-  console.log(`[Flash Content] Processing form with ${primaryForm.fields.length} fields`)
-  
-  const normalizeFieldType = (type: string): FormField["type"] => {
-    const allowed: FormField["type"][] = [
-      "text",
-      "email",
-      "phone",
-      "textarea",
-      "select",
-      "radio",
-      "checkbox",
-      "file",
-      "date"
-    ]
+function toFormFields(primaryForm: any, fieldIdFilter?: Set<string>): FormField[] {
+  const scopedFields = fieldIdFilter
+    ? primaryForm.fields.filter((field: any) => fieldIdFilter.has(field.id) || fieldIdFilter.has(field.name))
+    : primaryForm.fields
 
-    return allowed.includes(type as FormField["type"]) ? (type as FormField["type"]) : "text"
-  }
-
-  const formFields: FormField[] = primaryForm.fields.map((field) => ({
+  return scopedFields.map((field: any) => ({
     id: field.id,
+    name: field.name,
     label: field.label,
     type: normalizeFieldType(field.type),
     required: field.required,
     placeholder: field.placeholder,
-    options: field.options?.map((opt) => opt.label) || [],
-    value: field.value
+    options: field.options?.map((opt: any) => opt.label) || [],
+    value: field.value,
+    validation_rules: field.validation || null
   }))
+}
+
+async function fillApplication(fieldIdFilter?: Set<string>) {
+  console.log("[Flash Content] fillApplication called")
+
+  const primaryForm = getPrimaryForm()
+  if (!primaryForm) {
+    return { success: false, error: "No application form detected" }
+  }
+
+  const currentUser = await getCurrentAuthUser()
+  const userProfile = currentUser ? await getUserProfile(currentUser.id) : null
+
+  if (!userProfile?.user_id) {
+    return { success: false, error: "User profile not found. Please set up your profile in settings." }
+  }
+
+  const currentSession = await flashStorage.get("currentSession")
+  const jobId = currentSession?.currentJob?.job_id
+
+  console.log("[Flash Content] Session jobId:", jobId)
+  console.log(`[Flash Content] Processing form with ${primaryForm.fields.length} fields`)
+
+  const formFields = toFormFields(primaryForm, fieldIdFilter)
+  if (formFields.length === 0) {
+    return { success: false, error: "No target fields available for answer generation" }
+  }
 
   updateStatus("generating answers", true)
-  
+  console.log("Generating Answers to the fields")
+
   try {
     const response = await sendToBackground({
       name: "fillApplication",
       body: {
         formFields,
-        userId: userProfile.id,
-        jobId: jobId
+        userId: userProfile.user_id,
+        jobId,
+        userProfile
       }
     })
-    
+
     updateStatus("answers generated", true)
     console.log("[Flash Content] Received answers:", response.success ? response.data.answers.length : "failed")
     return response
@@ -269,6 +289,347 @@ async function  fillApplication() {
   }
 }
 
+function mapAnswersByFieldId(answers: Answer[]): Map<string, string> {
+  const answersMap = new Map<string, string>()
+  answers.forEach((answer) => {
+    if (answer.field_id) {
+      answersMap.set(answer.field_id, answer.answer)
+    }
+  })
+  return answersMap
+}
+
+function isElementVisible(element: HTMLElement): boolean {
+  const style = window.getComputedStyle(element)
+  if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) {
+    return false
+  }
+  const rect = element.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0
+}
+
+function isFieldEmpty(field: any): boolean {
+  const element = field.element as HTMLElement
+  if (!element || !document.body.contains(element)) return false
+
+  if (element instanceof HTMLInputElement) {
+    if (element.type === "checkbox" || element.type === "radio") return !element.checked
+    return !element.value?.trim()
+  }
+  if (element instanceof HTMLTextAreaElement) {
+    return !element.value?.trim()
+  }
+  if (element instanceof HTMLSelectElement) {
+    return !element.value?.trim()
+  }
+
+  const textValue =
+    element.getAttribute("aria-valuetext") ||
+    element.getAttribute("aria-label") ||
+    element.textContent ||
+    ""
+  return !textValue.trim()
+}
+
+function findMatchingFieldForElement(fields: any[], element: HTMLElement | null) {
+  if (!element) return null
+  const elementId = element.id
+  const elementName = element.getAttribute("name") || ""
+
+  return (
+    fields.find((field: any) => field.element === element) ||
+    fields.find((field: any) => field.element?.contains(element)) ||
+    (elementId ? fields.find((field: any) => field.id === elementId || field.name === elementId) : null) ||
+    (elementName ? fields.find((field: any) => field.name === elementName || field.id === elementName) : null) ||
+    null
+  )
+}
+
+function collectValidationDelta(primaryForm: any) {
+  const deltaFieldIds = new Set<string>()
+  const requiredEmptyFieldIds = new Set<string>()
+  const invalidFieldIds = new Set<string>()
+  const validationErrors: string[] = []
+  const fields = primaryForm.fields || []
+
+  fields.forEach((field: any) => {
+    if (!field?.required) return
+    if (!field?.element || !isElementVisible(field.element)) return
+    if (isFieldEmpty(field)) {
+      deltaFieldIds.add(field.id)
+      requiredEmptyFieldIds.add(field.id)
+    }
+  })
+
+  const invalidControls = document.querySelectorAll(
+    'input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="true"], [role="combobox"][aria-invalid="true"], [aria-haspopup="listbox"][aria-invalid="true"]'
+  )
+  invalidControls.forEach((control) => {
+    const matched = findMatchingFieldForElement(fields, control as HTMLElement)
+    if (matched?.id) {
+      deltaFieldIds.add(matched.id)
+      invalidFieldIds.add(matched.id)
+    }
+  })
+
+  const errorElements = document.querySelectorAll(
+    '[role="alert"], [aria-live="assertive"], .error, .errors, [data-automation-id*="error"], [id*="error"]'
+  )
+  errorElements.forEach((errorElement) => {
+    const el = errorElement as HTMLElement
+    if (!isElementVisible(el)) return
+    const text = el.textContent?.trim() || ""
+    if (text && text.length <= 180) {
+      validationErrors.push(text)
+    }
+
+    const errorId = el.id
+    let linkedControl: HTMLElement | null = null
+    if (errorId) {
+      linkedControl = document.querySelector(
+        `[aria-describedby~="${errorId}"], [aria-errormessage="${errorId}"]`
+      ) as HTMLElement | null
+    }
+    if (!linkedControl) {
+      linkedControl =
+        (el.closest("label")?.querySelector(
+          'input, textarea, select, [role="combobox"], [aria-haspopup="listbox"]'
+        ) as HTMLElement | null) ||
+        (el.parentElement?.querySelector(
+          'input, textarea, select, [role="combobox"], [aria-haspopup="listbox"]'
+        ) as HTMLElement | null)
+    }
+
+    const matched = findMatchingFieldForElement(fields, linkedControl)
+    if (matched?.id) {
+      deltaFieldIds.add(matched.id)
+      invalidFieldIds.add(matched.id)
+    }
+  })
+
+  return {
+    deltaFieldIds,
+    requiredEmptyFieldIds,
+    invalidFieldIds,
+    validationErrors: Array.from(new Set(validationErrors))
+  }
+}
+
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase()
+}
+
+function getElementLabel(element: HTMLElement): string {
+  if (element instanceof HTMLInputElement) {
+    return normalizeText(element.value || element.getAttribute("aria-label") || "")
+  }
+  return normalizeText(
+    element.textContent ||
+      element.getAttribute("aria-label") ||
+      element.getAttribute("value") ||
+      ""
+  )
+}
+
+function isButtonEnabled(button: HTMLElement): boolean {
+  const disabledAttr = button.getAttribute("disabled") !== null
+  const ariaDisabled = button.getAttribute("aria-disabled") === "true"
+  const classDisabled = /\bdisabled\b/i.test(button.className || "")
+  if (disabledAttr || ariaDisabled || classDisabled) return false
+  return isElementVisible(button)
+}
+
+function isSignInLabel(label: string): boolean {
+  return label.includes("sign in") || label.includes("log in") || label.includes("login")
+}
+
+function isAccountCreationLabel(label: string): boolean {
+  return (
+    label.includes("sign up") ||
+    label.includes("signup") ||
+    label.includes("create account") ||
+    label.includes("register")
+  )
+}
+
+function isContinueLabel(label: string): boolean {
+  return label.includes("continue") || label.includes("save and continue")
+}
+
+function isLikelyLoginForm(primaryForm: any): boolean {
+  const fields = primaryForm?.fields || []
+  return fields.some((field: any) => field?.type === "password")
+}
+
+function findActionButton(primaryForm: any, intent: "advance" | "signin"): HTMLElement | null {
+  const scopedRoot = (primaryForm?.element as ParentNode) || document
+  const candidates = scopedRoot.querySelectorAll(
+    'button[type="submit"], input[type="submit"], button, input[type="button"], [role="button"]'
+  )
+  const isLoginForm = isLikelyLoginForm(primaryForm)
+  const ranked: Array<{ element: HTMLElement; label: string; score: number }> = []
+
+  for (const candidate of candidates) {
+    if (!(candidate instanceof HTMLElement)) continue
+    if (!isButtonEnabled(candidate)) continue
+    const label = getElementLabel(candidate)
+    if (intent === "signin") {
+      if (!isSignInLabel(label) && !isAccountCreationLabel(label)) continue
+      const score = isSignInLabel(label) ? 100 : 90
+      ranked.push({ element: candidate, label, score })
+      continue
+    }
+
+    if (isLoginForm) {
+      if (!isSignInLabel(label) && !isAccountCreationLabel(label)) continue
+      const score = isSignInLabel(label) ? 100 : 90
+      ranked.push({ element: candidate, label, score })
+      continue
+    }
+
+    if (!isContinueLabel(label)) continue
+    const score = label.includes("save and continue") ? 100 : 90
+    ranked.push({ element: candidate, label, score })
+  }
+
+  if (ranked.length === 0) return null
+  ranked.sort((a, b) => b.score - a.score)
+  return ranked[0].element
+}
+
+async function autoAdvanceToNextStep(primaryForm: any) {
+  console.log("[AutoAdvance] called")
+  const button = findActionButton(primaryForm, "advance")
+  if (!button) {
+    return { clicked: false, moved: false, reason: "No eligible action button found (sign in/continue/save and continue)" }
+  }
+
+  const buttonLabel = getElementLabel(button)
+
+  try {
+    button.scrollIntoView({ block: "center", behavior: "smooth" })
+    await sleep(150)
+    button.click()
+    console.log("[Flash Content] Auto-advance clicked:", buttonLabel)
+    return { clicked: true, moved: true, reason: "Clicked action button", buttonLabel }
+  } catch (error) {
+    return {
+      clicked: false,
+      moved: false,
+      reason: error instanceof Error ? error.message : "Failed to click button"
+    }
+  }
+}
+
+async function fillApplicationWithValidationRetry() {
+  const allAnswers = new Map<string, Answer>()
+  const retryDiagnostics: string[] = []
+  let latestInjection: any = null
+  let injectedAtLeastOnce = false
+
+  const initialFill = await fillApplication()
+  if (!initialFill.success) return initialFill
+
+
+  const initialAnswers = initialFill.data?.answers || []
+  initialAnswers.forEach((answer: Answer) => {
+    if (answer.field_id) allAnswers.set(answer.field_id, answer)
+  })
+
+    console.log("[Intiyisl FILL ANswers]", initialAnswers)
+
+    
+  if (initialAnswers.length > 0) {
+    const initialInject = await injectAnswers(initialAnswers)
+    if (initialInject.success) {
+      latestInjection = initialInject.data
+      injectedAtLeastOnce = true
+    }
+  }
+
+  let completedRounds = 0
+  let lastDeltaSummary: {
+    requiredEmptyCount: number
+    invalidCount: number
+    sampleFieldIds: string[]
+    sampleErrors: string[]
+  } = {
+    requiredEmptyCount: 0,
+    invalidCount: 0,
+    sampleFieldIds: [],
+    sampleErrors: []
+  }
+  // Retry loop is intentionally disabled for now.
+  // We go straight from initial injection to auto-advance.
+
+  const postForm = getPrimaryForm()
+  const postDelta = postForm ? collectValidationDelta(postForm) : null
+  const unresolvedFieldIds = postDelta
+    ? Array.from(postDelta.deltaFieldIds).filter((fieldId) => !allAnswers.has(fieldId))
+    : []
+  if (postDelta) {
+    lastDeltaSummary = {
+      requiredEmptyCount: postDelta.requiredEmptyFieldIds.size,
+      invalidCount: postDelta.invalidFieldIds.size,
+      sampleFieldIds: unresolvedFieldIds.slice(0, 5),
+      sampleErrors: postDelta.validationErrors.slice(0, 3)
+    }
+  }
+
+  let autoAdvance: {
+    clicked: boolean
+    moved: boolean
+    reason: string
+    buttonLabel?: string
+  } | null = null
+
+  // Always attempt to advance once injection is complete.
+  if (postForm && injectedAtLeastOnce) {
+    autoAdvance = await autoAdvanceToNextStep(postForm)
+    if (autoAdvance.clicked) {
+      updateStatus(autoAdvance.moved ? "advanced to next step" : "clicked continue", true)
+    }
+  }
+
+  return {
+    success: true,
+    data: {
+      answers: Array.from(allAnswers.values()),
+      injection: latestInjection,
+      retryRounds: completedRounds,
+      unresolvedFieldIds,
+      retryDiagnostics,
+      lastDeltaSummary,
+      autoAdvance
+    }
+  }
+}
+
+async function autoAdvanceOnce() {
+  const primaryForm = getPrimaryForm()
+  if (!primaryForm) {
+    return { success: false, error: "No form available for auto-advance" }
+  }
+
+  const result = await autoAdvanceToNextStep(primaryForm)
+  return { success: true, data: result }
+}
+
+async function clickSignInOnce() {
+  const primaryForm = getPrimaryForm()
+  const button = findActionButton(primaryForm, "signin")
+  if (button) {
+    const label = getElementLabel(button)
+    button.scrollIntoView({ block: "center", behavior: "smooth" })
+    await sleep(100)
+    button.click()
+    console.log("[Flash Content] Sign In clicked", { buttonLabel: label })
+    return { success: true, data: { clicked: true, buttonLabel: label } }
+  }
+
+  return { success: false, error: "Sign In button not found" }
+}
+
 async function injectAnswers(answers: Answer[]) {
   console.log("[Flash Content] injectAnswers called with", answers.length, "answers")
   
@@ -279,14 +640,9 @@ async function injectAnswers(answers: Answer[]) {
 
   updateStatus("injecting answers", true)
   const primaryForm = forms.forms[0]
-  const answersMap = new Map<string, string>()
-  
-  // Map answers by field_id
-  answers.forEach((answer) => {
-    if (answer.field_id) {
-      answersMap.set(answer.field_id, answer.answer)
-      console.log("[Flash Content] Mapping answer for field:", answer.field_id)
-    }
+  const answersMap = mapAnswersByFieldId(answers)
+  answersMap.forEach((_answer, fieldId) => {
+    console.log("[Flash Content] Mapping answer for field:", fieldId)
   })
   
   console.log(`[Flash Content] Injecting ${answersMap.size} answers into ${primaryForm.fields.length} fields`)
@@ -356,8 +712,8 @@ async function triggerAutoFill(formId: string) {
     console.log("[Flash AutoFill] Starting auto-fill for form:", formId)
     updateStatus("🤖 auto-filling form...", true)
 
-    // Step 1: Fill application
-    const fillResponse = await fillApplication()
+    // Step 1: Fill application with validation-aware retries
+    const fillResponse = await fillApplicationWithValidationRetry()
     
     if (!fillResponse.success) {
       console.error("[Flash AutoFill] Failed to generate answers:", fillResponse.error)
@@ -367,29 +723,21 @@ async function triggerAutoFill(formId: string) {
     }
 
     const answers = fillResponse.data?.answers || []
+    const injection = fillResponse.data?.injection
+    const retryRounds = fillResponse.data?.retryRounds || 0
     console.log(`[Flash AutoFill] Generated ${answers.length} answers`)
 
-    // Step 2: Inject answers
-    if (answers.length > 0) {
-      const injectResponse = await injectAnswers(answers)
-      
-      if (injectResponse.success && injectResponse.data) {
-        const result = injectResponse.data
-        console.log(`[Flash AutoFill] Injection complete: ${result.filled}/${result.total} fields`)
-        updateStatus(`✅ filled ${result.filled} fields`, true)
-        
-        // Show notification
-        showNotification(
-          "Form Auto-Filled",
-          `Filled ${result.filled} fields. Please review before submitting.`,
-          "success"
-        )
-      } else {
-        console.error("[Flash AutoFill] Injection failed:", injectResponse.error)
-        updateStatus("❌ injection failed", true)
-      }
+    if (injection) {
+      console.log(`[Flash AutoFill] Injection complete: ${injection.filled}/${injection.total} fields`)
+      updateStatus(`filled ${injection.filled} fields`, true)
+      showNotification(
+        "Form Auto-Filled",
+        `Filled ${injection.filled} fields with ${retryRounds} retry rounds. Please review before submitting.`,
+        "success"
+      )
+    } else {
+      console.warn("[Flash AutoFill] No injection summary returned")
     }
-
     // Small delay before allowing next form
     await new Promise(resolve => setTimeout(resolve, 2000))
     
@@ -497,6 +845,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
       case "FILL_APPLICATION":
         sendResponse(await fillApplication())
+        break
+      
+      case "FILL_APPLICATION_WITH_RETRY":
+        sendResponse(await fillApplicationWithValidationRetry())
+        break
+
+      case "AUTO_ADVANCE_ONCE":
+        sendResponse(await autoAdvanceOnce())
+        break
+      
+      case "AUTO_CLICK_SIGNIN":
+        sendResponse(await clickSignInOnce())
         break
 
       case "INJECT_ANSWERS":

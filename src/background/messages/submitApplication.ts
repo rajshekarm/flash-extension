@@ -2,16 +2,17 @@
 import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
 import { flashStorage } from '~lib/storage/chrome';
-import type { Answer } from '~types';
+import type { Answer, UserProfile } from '~types';
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
   console.log('[submitApplication] Received request');
 
   try {
-    const { applicationId, userId, approvedAnswers } = req.body as {
+    const { applicationId, userId, approvedAnswers, userProfile } = req.body as {
       applicationId: string;
       userId: string;
       approvedAnswers: Answer[];
+      userProfile?: Partial<UserProfile>;
     };
 
     if (!applicationId || !userId || !approvedAnswers) {
@@ -24,7 +25,8 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
     const result = await flashAPI.approveApplication(
       applicationId,
       userId,
-      approvedAnswers
+      approvedAnswers,
+      userProfile
     );
 
     // Add to recent jobs

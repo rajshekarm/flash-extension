@@ -79,25 +79,30 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     if (isJobBoard) {
       console.log('[Flash Background] Job board detected:', tab.url);
       
-      // Update badge to indicate detection
-      chrome.action.setBadgeText({ text: '🎯', tabId });
-      chrome.action.setBadgeBackgroundColor({ color: '#3B82F6', tabId });
-      
-      // Optionally inject content script
-      await injectContentScriptIfNeeded(tabId);
-      
-      // Check preferences for auto-open sidepanel
-      const prefs = await flashSyncStorage.get('preferences');
-      if (prefs?.autoOpenSidepanel) {
-        // Auto-open sidepanel on job board detection
-        chrome.sidePanel.open({ tabId });
-        console.log('[Flash Background] Sidepanel opened automatically');
+      // Update badge to indicate detection  
+      try {
+        chrome.action.setBadgeText({ text: '🎯', tabId });
+        chrome.action.setBadgeBackgroundColor({ color: '#3B82F6', tabId });
+      } catch (error) {
+        console.warn('[Flash Background] Failed to update badge:', error);
       }
       
-      // Check preferences for auto-analyze
-      if (prefs?.autoAnalyze) {
-        // Auto-analyze could be triggered here
-        console.log('[Flash Background] Auto-analyze is enabled');
+      // Note: Content script injection is handled automatically by Plasmo
+      // based on the matches configuration in contents/index.ts
+      
+      // Check preferences for auto-open sidepanel
+      try {
+        const prefs = await flashSyncStorage.get('preferences');
+        if (prefs?.autoOpenSidepanel) {
+          chrome.sidePanel.open({ tabId });
+          console.log('[Flash Background] Sidepanel opened automatically');
+        }
+        
+        if (prefs?.autoAnalyze) {
+          console.log('[Flash Background] Auto-analyze is enabled');
+        }
+      } catch (error) {
+        console.warn('[Flash Background] Failed to check preferences:', error);
       }
     }
   }

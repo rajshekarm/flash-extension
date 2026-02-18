@@ -2,70 +2,84 @@
 import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
 import { flashStorage } from '~lib/storage/chrome';
-import { parseUserProfileError } from '~lib/utils/userProfileErrors';
 
-// Helper function to timeout promises
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error(`Login timed out after ${timeoutMs}ms - check if backend is running`));
-    }, timeoutMs);
-
-    promise
-      .then((result) => {
-        clearTimeout(timeout);
-        resolve(result);
-      })
-      .catch((error) => {
-        clearTimeout(timeout);
-        reject(error);
-      });
-  });
+interface LoginRequest {
+  email: string;
+  password: string;
 }
-import type { LoginCredentials } from '~types';
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
-  console.log('[login] Received request');
+  console.log('[login] Starting login...');
 
   try {
-    const { email, password } = req.body as LoginCredentials;
+    const { email, password } = req.body as LoginRequest;
 
     if (!email || !password) {
-      throw new Error('Email and password are required');
+      res.send({ success: false, error: 'Email and password are required' });
+      return;
     }
 
-    console.log('[login] Calling Flash API...', { email });
+    console.log('[login] Calling backend API...');
+    const authSession = await flashAPI.login({ email, password });
+    
+    console.log('[login] Backend response received');
 
-    // Call Flash API to login
-    console.log('[login] Attempting login with backend...');
-    const authSession = await withTimeout(
-      flashAPI.login({ email, password }),
-      15000 // 15 second timeout for login
-    );
-
-    // Store authentication session and tokens
+    // Store authentication data
     await flashStorage.set('authSession', authSession);
     await flashStorage.set('authToken', authSession.access_token);
+    
+    console.log('[login] Storing token details:', {
+      tokenExists: !!authSession.access_token,
+      tokenType: typeof authSession.access_token,
+      tokenLength: authSession.access_token ? authSession.access_token.length : 0,
+      tokenValue: authSession.access_token,
+      fullAuthSession: authSession
+    });
+    
     if (authSession.refresh_token) {
       await flashStorage.set('refreshToken', authSession.refresh_token);
     }
 
-    console.log('[login] Login successful:', authSession.user.id);
+    // DEBUG: Verify what was stored
+    const verifySession = await flashStorage.get('authSession');
+    const verifyToken = await flashStorage.get('authToken');
+    console.log('[login] Stored auth data verification:', {
+      sessionStored: !!verifySession,
+      tokenStored: !!verifyToken,
+      hasUser: !!verifySession?.user,
+      userId: verifySession?.user?.id
+    });
+    
+    // DEBUG: Check raw Chrome storage
+    const rawStorage = await chrome.storage.local.get(['authSession', 'authToken', 'refreshToken']);
+    console.log('[login] RAW Chrome Storage after storing:', rawStorage);
 
-    res.send({
-      success: true,
-      data: authSession,
-    });
+    console.log('[login] Login successful');
+    res.send({ success: true, data: authSession });
+
   } catch (error) {
-    console.error('[login] Error:', error);
+    console.error('[login] Login failed:', error);
     
-    const authError = parseUserProfileError(error);
+    const errorMessage = error instanceof Error ? error.message : 'Login failed';
     
-    res.send({
-      success: false,
-      error: authError.message,
-      errorType: authError.type,
-    });
+    // Simple error classification
+    if (errorMessage.includes('401') || errorMessage.toLowerCase().includes('unauthorized')) {
+      res.send({ 
+        success: false, 
+        error: 'Invalid email or password' 
+      });
+    } else if (errorMessage.toLowerCase().includes('network') ||
+               errorMessage.toLowerCase().includes('connection')) {
+      res.send({ 
+        success: false, 
+        error: 'Network error - check connection' 
+      });
+    } else {
+      res.send({ 
+        success: false, 
+        error: errorMessage 
+      });
+    }
   }
 };
 

@@ -347,18 +347,34 @@ export async function login(email: string, password: string) {
 
 export async function register(name: string, email: string, password: string, confirmPassword: string) {
   try {
+    console.log('[register] Sending registration request to background...');
     const response = await sendMessage({
       name: 'register',
       body: { name, email, password, confirmPassword }
     });
     
+    console.log('[register] Background response:', response);
+    console.log('[register] Response details:', {
+      success: response?.success,
+      hasData: !!response?.data,
+      hasError: !!response?.error,
+      errorType: response?.errorType,
+      warning: response?.warning
+    });
+    
     if (response?.success) {
-      return response.data;
+      // Include warning in returned data if present
+      const result = response.data;
+      if (response.warning) {
+        result.warning = response.warning;
+      }
+      return result;
     } else {
+      console.log('[register] Registration failed, throwing error:', response?.error);
       throw new Error(response?.error || 'Registration failed');
     }
   } catch (error) {
-    console.error('[register] Error:', error);
+    console.error('[register] Error in storage layer:', error);
     throw error;
   }
 }
@@ -400,39 +416,38 @@ export async function checkAuth() {
       throw new Error(response?.error || 'Auth check failed');
     }
   } catch (error) {
-    console.error('[checkAuth] Error:', error);
+    console.error('[checkAuth] Background communication failed:', error);
     
-    // If it's a timeout or communication error, try to check local storage as fallback
-    const isTimeoutOrCommError = error instanceof Error && 
-      (error.message.includes('timed out') || 
-       error.message.includes('message port closed') ||
-       error.message.includes('receiving end does not exist'));
+    // If background communication fails, check local storage directly
+    console.log('[checkAuth] Falling back to local storage check...');
     
-    if (isTimeoutOrCommError) {
-      console.log('[checkAuth] Background communication failed, checking local storage...');
+    try {
+      const authSession = await flashStorage.get('authSession');
+      const authToken = await flashStorage.get('authToken');
       
-      // Try to get cached auth data
-      try {
-        const authSession = await flashStorage.get('authSession');
-        const authToken = await flashStorage.get('authToken');
+      if (authSession && authToken) {
+        // Check if token is still valid
+        const expiresAt = new Date(authSession.expires_at);
+        const now = new Date();
         
-        if (authSession && authToken) {
-          // Check if token is still valid (not expired by more than 15 minutes)
-          const expiresAt = new Date(authSession.expires_at);
-          const now = new Date();
-          const fifteenMinutes = 15 * 60 * 1000;
-          
-          if (expiresAt.getTime() + fifteenMinutes > now.getTime()) {
-            console.log('[checkAuth] Using cached auth session as fallback');
-            return {
-              authenticated: true,
-              user: authSession.user
-            };
-          }
+        if (expiresAt > now) {
+          console.log('[checkAuth] Using cached auth session as fallback');
+          return {
+            authenticated: true,
+            user: authSession.user
+          };
+        } else {
+          console.log('[checkAuth] Cached session expired');
+          // Clear expired session
+          await Promise.all([
+            flashStorage.remove('authSession'),
+            flashStorage.remove('authToken'),
+            flashStorage.remove('refreshToken'),
+          ]);
         }
-      } catch (storageError) {
-        console.error('[checkAuth] Local storage fallback failed:', storageError);
       }
+    } catch (storageError) {
+      console.error('[checkAuth] Local storage fallback failed:', storageError);
     }
     
     return {
@@ -452,8 +467,29 @@ export async function getAuthToken() {
 
 export async function isAuthenticated(): Promise<boolean> {
   try {
-    const authCheck = await checkAuth();
-    return authCheck.authenticated;
+    // Direct local check without background messages
+    const authSession = await flashStorage.get('authSession');
+    const authToken = await flashStorage.get('authToken');
+    
+    if (!authSession || !authToken) {
+      return false;
+    }
+    
+    // Check if token is not expired
+    const expiresAt = new Date(authSession.expires_at);
+    const now = new Date();
+    
+    if (expiresAt <= now) {
+      // Clean up expired session
+      await Promise.all([
+        flashStorage.remove('authSession'),
+        flashStorage.remove('authToken'),
+        flashStorage.remove('refreshToken'),
+      ]);
+      return false;
+    }
+    
+    return true;
   } catch (error) {
     console.error('[isAuthenticated] Error:', error);
     return false;
@@ -462,6 +498,31 @@ export async function isAuthenticated(): Promise<boolean> {
 
 export async function getCurrentAuthUser() {
   try {
+    // Try direct storage access first (faster and more reliable)
+    const authSession = await flashStorage.get('authSession');
+    
+    if (authSession?.user) {
+      // Check if token is not expired
+      const expiresAt = new Date(authSession.expires_at);
+      const now = new Date();
+      
+      if (expiresAt > now) {
+        console.log('[getCurrentAuthUser] Using cached auth session');
+        return authSession.user;
+      } else {
+        console.log('[getCurrentAuthUser] Token expired');
+        // Clear expired session
+        await Promise.all([
+          flashStorage.remove('authSession'),
+          flashStorage.remove('authToken'),
+          flashStorage.remove('refreshToken'),
+        ]);
+        return null;
+      }
+    }
+    
+    // Fallback to checkAuth if no direct session
+    console.log('[getCurrentAuthUser] Falling back to checkAuth');
     const authCheck = await checkAuth();
     return authCheck.user;
   } catch (error) {
