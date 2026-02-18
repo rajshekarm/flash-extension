@@ -214,8 +214,7 @@ export interface AnswerQuestionResponse {
 }
 
 export interface FillApplicationRequest {
-  form_fields: FormField[];
-  questions?: ApplicationQuestion[];
+  questions: ApplicationQuestion[];
   user_id: string;
   job_id?: string;
 }

@@ -219,24 +219,6 @@ function normalizeFieldType(type: string): FormField["type"] {
   return allowed.includes(type as FormField["type"]) ? (type as FormField["type"]) : "text"
 }
 
-function toFormFields(primaryForm: any, fieldIdFilter?: Set<string>): FormField[] {
-  const scopedFields = fieldIdFilter
-    ? primaryForm.fields.filter((field: any) => fieldIdFilter.has(field.id) || fieldIdFilter.has(field.name))
-    : primaryForm.fields
-
-  return scopedFields.map((field: any) => ({
-    id: field.id,
-    name: field.name,
-    label: field.label,
-    type: normalizeFieldType(field.type),
-    required: field.required,
-    placeholder: field.placeholder,
-    options: field.options?.map((opt: any) => opt.label) || [],
-    value: field.value,
-    validation_rules: field.validation || null
-  }))
-}
-
 function toQuestionId(prompt: string, fallback: string): string {
   const normalized = prompt.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")
   if (normalized) return `q_${normalized}`
@@ -396,10 +378,9 @@ async function fillApplication(fieldIdFilter?: Set<string>) {
   console.log("[Flash Content] Session jobId:", jobId)
   console.log(`[Flash Content] Processing form with ${primaryForm.fields.length} fields`)
 
-  const formFields = toFormFields(primaryForm, fieldIdFilter)
   const formQuestions = toFormQuestions(primaryForm, fieldIdFilter)
-  if (formFields.length === 0) {
-    return { success: false, error: "No target fields available for answer generation" }
+  if (formQuestions.length === 0) {
+    return { success: false, error: "No target questions available for answer generation" }
   }
 
   updateStatus("generating answers", true)
@@ -409,8 +390,7 @@ async function fillApplication(fieldIdFilter?: Set<string>) {
     const response = await sendToBackground({
       name: "fillApplication",
       body: {
-        formFields,
-        formQuestions,
+        questions: formQuestions,
         userId: userProfile.user_id,
         jobId,
         userProfile

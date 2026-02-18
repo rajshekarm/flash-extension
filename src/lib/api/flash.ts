@@ -6,7 +6,6 @@ import type {
   TailoredResume,
   QuestionContext,
   Answer,
-  FormField,
   ApplicationQuestion,
   UserProfile,
   ApplicationData,
@@ -86,59 +85,21 @@ export class FlashAPI {
   /**
    * Fill entire application form
    */
-  // async fillApplication(
-  //   formFields: FormField[],
-  //   userId: string,
-  //   jobId?: string
-  // ): Promise<{ answers: Answer[]; overall_confidence: number }> {
-  //   const response = await apiClient.getClient()!.post('/api/flash/fill-application', {
-  //     form_fields: formFields,
-  //     user_id: userId,
-  //     job_id: jobId,
-  //   });
-  //   return response.data;
-  // }
-
   async fillApplication(
-    formFields: FormField[],
+    questions: ApplicationQuestion[],
     userId: string,
     jobId?: string,
-    formQuestions?: ApplicationQuestion[],
     userProfile?: Partial<UserProfile>
   ): Promise<{ answers: Answer[]; overall_confidence: number }> {
     console.log("request to fill the application")
 
-    const legacyFormFields = formFields.map((field) => ({
-      id: field.id,
-      label: field.label,
-      type: field.type,
-      required: field.required,
-      placeholder: field.placeholder ?? "",
-      options: field.options ?? [],
-    }));
-
-    const payload: Record<string, unknown> = {
-      form_fields: legacyFormFields,
+    const payload = {
+      questions,
       user_id: userId,
       job_id: jobId,
     };
 
-    if (formQuestions && formQuestions.length > 0) {
-      payload.questions = formQuestions;
-    }
-
-    try {
-      return await this.postWithOptionalProfile('/api/flash/fill-application-form', payload, userProfile);
-    } catch (error: any) {
-      const status = error?.response?.status;
-      if (payload.questions && (status === 400 || status === 422)) {
-        console.warn('[FlashAPI] fill-application-form rejected questions payload, retrying without questions', { status });
-        const fallbackPayload = { ...payload };
-        delete fallbackPayload.questions;
-        return await this.postWithOptionalProfile('/api/flash/fill-application-form', fallbackPayload, userProfile);
-      }
-      throw error;
-    }
+    return await this.postWithOptionalProfile('/api/flash/fill-application-form', payload, userProfile);
   }
 
   /**
