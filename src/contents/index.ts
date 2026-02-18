@@ -424,7 +424,7 @@ function resolveTargetFieldIdsForAnswer(answer: Answer, primaryForm: any): strin
     }
   }
 
-  return question.field_ids
+  return  question.field_ids
 }
 
 async function fillApplication(fieldIdFilter?: Set<string>) {
