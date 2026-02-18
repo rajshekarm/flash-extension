@@ -2,21 +2,21 @@
 import type { PlasmoMessaging } from '@plasmohq/messaging';
 import { flashAPI } from '~lib/api';
 import { flashStorage } from '~lib/storage/chrome';
-import type { FormField, UserProfile } from '~types';
+import type { ApplicationQuestion, UserProfile } from '~types';
 
 const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
   console.log('[fillApplication] Received request');
 
   try {
-    const { formFields, userId, jobId, userProfile } = req.body as {
-      formFields: FormField[];
+    const { questions, userId, jobId, userProfile } = req.body as {
+      questions: ApplicationQuestion[];
       userId: string;
       jobId: string;
       userProfile?: Partial<UserProfile>;
     };
     
-    if (!formFields || formFields.length === 0) {
-      throw new Error('Form fields are required');
+    if (!questions || questions.length === 0) {
+      throw new Error('Questions are required');
     }
     if (!userId) {
       throw new Error('User ID is required');
@@ -26,13 +26,13 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
     //   throw new Error('Job ID is required');
     // }
     
-    console.log(`[fillApplication] Processing ${formFields.length} fields`);
+    console.log(`[fillApplication] Processing ${questions.length} questions`);
 
     // alert("calling Fast API")
 
     // Call Flash API to fill application
     console.log("making backend APi calll")
-    const result = await flashAPI.fillApplication(formFields, userId, jobId, userProfile);
+    const result = await flashAPI.fillApplication(questions, userId, jobId, userProfile);
 
     // Cache the answers
     const answersCache = await flashStorage.get('answersCache') || [];

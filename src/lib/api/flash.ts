@@ -6,7 +6,7 @@ import type {
   TailoredResume,
   QuestionContext,
   Answer,
-  FormField,
+  ApplicationQuestion,
   UserProfile,
   ApplicationData,
   LoginRequest,
@@ -85,41 +85,21 @@ export class FlashAPI {
   /**
    * Fill entire application form
    */
-  // async fillApplication(
-  //   formFields: FormField[],
-  //   userId: string,
-  //   jobId?: string
-  // ): Promise<{ answers: Answer[]; overall_confidence: number }> {
-  //   const response = await apiClient.getClient()!.post('/api/flash/fill-application', {
-  //     form_fields: formFields,
-  //     user_id: userId,
-  //     job_id: jobId,
-  //   });
-  //   return response.data;
-  // }
-
   async fillApplication(
-    formFields: FormField[],
+    questions: ApplicationQuestion[],
     userId: string,
     jobId?: string,
     userProfile?: Partial<UserProfile>
   ): Promise<{ answers: Answer[]; overall_confidence: number }> {
     console.log("request to fill the application")
 
-    const legacyFormFields = formFields.map((field) => ({
-      id: field.id,
-      label: field.label,
-      type: field.type,
-      required: field.required,
-      placeholder: field.placeholder ?? "",
-      options: field.options ?? [],
-    }));
-
-    return await this.postWithOptionalProfile('/api/flash/fill-application-form', {
-      form_fields: legacyFormFields,
+    const payload = {
+      questions,
       user_id: userId,
       job_id: jobId,
-    }, userProfile);
+    };
+
+    return await this.postWithOptionalProfile('/api/flash/fill-application-form', payload, userProfile);
   }
 
   /**

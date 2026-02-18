@@ -10,6 +10,7 @@ import { FieldInjector } from "~lib/dom/fieldInjector"
 import { debounce, sleep } from "~lib/utils/helpers"
 import { flashSyncStorage, flashStorage, getUserProfile, getCurrentAuthUser } from "~lib/storage/chrome"
 import type {
+  ApplicationQuestion,
   Answer,
   ExtractedJobInfo,
   FormField,
@@ -218,22 +219,142 @@ function normalizeFieldType(type: string): FormField["type"] {
   return allowed.includes(type as FormField["type"]) ? (type as FormField["type"]) : "text"
 }
 
-function toFormFields(primaryForm: any, fieldIdFilter?: Set<string>): FormField[] {
+function toQuestionId(prompt: string, fallback: string): string {
+  const normalized = prompt.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")
+  if (normalized) return `q_${normalized}`
+  return `q_${fallback.replace(/[^a-zA-Z0-9]/g, "_")}`
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  values.forEach((value) => {
+    const trimmed = value.trim()
+    if (!trimmed) return
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    result.push(trimmed)
+  })
+  return result
+}
+
+function extractOptionLabels(rawOptions: any[] | undefined): string[] {
+  if (!rawOptions || rawOptions.length === 0) return []
+  return uniqueStrings(
+    rawOptions
+      .map((option) => {
+        if (typeof option === "string") return option
+        if (option && typeof option === "object") {
+          return option.label || option.value || ""
+        }
+        return ""
+      })
+      .filter(Boolean)
+  )
+}
+
+function questionTypeFromFieldType(
+  fieldType: FormField["type"]
+): ApplicationQuestion["question_type"] {
+  if (fieldType === "select" || fieldType === "radio") return "single_choice"
+  if (fieldType === "checkbox") return "multi_choice"
+  if (fieldType === "date") return "date"
+  if (fieldType === "file") return "file"
+  return "free_text"
+}
+
+function extractRadioGroupPrompt(field: any): string {
+  const element = field?.element as HTMLElement | undefined
+  if (!element) return field?.label || "Radio Question"
+
+  const fieldsetLegend = element.closest("fieldset")?.querySelector("legend")?.textContent?.trim()
+  if (fieldsetLegend) return fieldsetLegend.replace(/\*/g, "").trim()
+
+  const container =
+    element.closest('[data-automation-id*="question"]') ||
+    element.closest('[data-automation-id*="formField"]') ||
+    element.closest('[role="group"]') ||
+    element.parentElement
+
+  if (container instanceof HTMLElement) {
+    const candidates = Array.from(
+      container.querySelectorAll(
+        'label, legend, [data-automation-id*="label"], [data-automation-id*="prompt"], p, h3, h4, span'
+      )
+    )
+      .map((node) => (node.textContent || "").replace(/\*/g, "").trim())
+      .filter((text) => text.length > 3)
+      .filter((text) => {
+        const lower = text.toLowerCase()
+        return lower !== "yes" && lower !== "no"
+      })
+      .sort((a, b) => b.length - a.length)
+
+    if (candidates.length > 0) return candidates[0]
+  }
+
+  return field?.label || "Radio Question"
+}
+
+function toFormQuestions(primaryForm: any, fieldIdFilter?: Set<string>): ApplicationQuestion[] {
   const scopedFields = fieldIdFilter
     ? primaryForm.fields.filter((field: any) => fieldIdFilter.has(field.id) || fieldIdFilter.has(field.name))
     : primaryForm.fields
 
-  return scopedFields.map((field: any) => ({
-    id: field.id,
-    name: field.name,
-    label: field.label,
-    type: normalizeFieldType(field.type),
-    required: field.required,
-    placeholder: field.placeholder,
-    options: field.options?.map((opt: any) => opt.label) || [],
-    value: field.value,
-    validation_rules: field.validation || null
-  }))
+  const questions: ApplicationQuestion[] = []
+  const processedRadioGroups = new Set<string>()
+
+  scopedFields.forEach((field: any, index: number) => {
+    const fieldType = normalizeFieldType(field.type)
+    const fieldId = field.id || field.name || `field_${index}`
+
+    if (fieldType === "radio") {
+      const radioGroupKey = field.name || `radio_${fieldId}`
+      if (processedRadioGroups.has(radioGroupKey)) return
+      processedRadioGroups.add(radioGroupKey)
+
+      const groupFields = scopedFields.filter((candidate: any) => {
+        const candidateType = normalizeFieldType(candidate.type)
+        return candidateType === "radio" && (candidate.name || `radio_${candidate.id}`) === radioGroupKey
+      })
+
+      const prompt = extractRadioGroupPrompt(field)
+      const options = uniqueStrings(
+        groupFields
+          .map((groupField: any) => groupField.label || groupField.value || "")
+          .filter((value: string) => !!value)
+      )
+      const fieldIds = uniqueStrings(
+        groupFields
+          .map((groupField: any) => groupField.id || groupField.name || "")
+          .filter((value: string) => !!value)
+      )
+      questions.push({
+        question_id: toQuestionId(prompt, radioGroupKey),
+        prompt,
+        required: !!groupFields.some((groupField: any) => groupField.required),
+        question_type: "single_choice",
+        options,
+        field_ids: fieldIds
+      })
+      return
+    }
+
+    const prompt = (field.label || field.name || `Field ${index + 1}`).replace(/\*/g, "").trim()
+    const options = extractOptionLabels(field.options)
+
+    questions.push({
+      question_id: toQuestionId(prompt, fieldId),
+      prompt,
+      required: !!field.required,
+      question_type: questionTypeFromFieldType(fieldType),
+      options: options.length > 0 ? options : undefined,
+      field_ids: [fieldId]
+    })
+  })
+
+  return questions
 }
 
 async function fillApplication(fieldIdFilter?: Set<string>) {
@@ -257,9 +378,9 @@ async function fillApplication(fieldIdFilter?: Set<string>) {
   console.log("[Flash Content] Session jobId:", jobId)
   console.log(`[Flash Content] Processing form with ${primaryForm.fields.length} fields`)
 
-  const formFields = toFormFields(primaryForm, fieldIdFilter)
-  if (formFields.length === 0) {
-    return { success: false, error: "No target fields available for answer generation" }
+  const formQuestions = toFormQuestions(primaryForm, fieldIdFilter)
+  if (formQuestions.length === 0) {
+    return { success: false, error: "No target questions available for answer generation" }
   }
 
   updateStatus("generating answers", true)
@@ -269,7 +390,7 @@ async function fillApplication(fieldIdFilter?: Set<string>) {
     const response = await sendToBackground({
       name: "fillApplication",
       body: {
-        formFields,
+        questions: formQuestions,
         userId: userProfile.user_id,
         jobId,
         userProfile

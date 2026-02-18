@@ -388,7 +388,7 @@ export class FormDetector {
       '';
     const label = this.extractLabel(element);
     const type = this.determineFieldType(element);
-    const required = element.hasAttribute('required') || element.getAttribute('aria-required') === 'true';
+    const required = this.isFieldRequired(element);
     const placeholder = element.getAttribute('placeholder') || element.getAttribute('aria-placeholder') || '';
 
     // Extract options for select/radio fields
@@ -469,17 +469,114 @@ export class FormDetector {
     const ariaControls = element.getAttribute('aria-controls');
     const automationId = element.getAttribute('data-automation-id')?.toLowerCase() || '';
     const className = element.className?.toString().toLowerCase() || '';
-    const parentRole = element.closest('[role]')?.getAttribute('role')?.toLowerCase() || '';
+    const inComboboxContainer =
+      !!element.closest('[role="combobox"]') ||
+      !!element.closest('[data-automation-id*="combo"]') ||
+      !!element.closest('[data-automation-id*="dropdown"]') ||
+      !!element.closest('[data-automation-id*="select"]');
+    const hasListboxTriggerNearby = !!element
+      .closest('[data-automation-id*="question"], [data-automation-id*="formField"], [role="group"], div')
+      ?.querySelector(
+        '[aria-haspopup="listbox"], button[aria-label*="select"], button[aria-label*="dropdown"], [data-automation-id*="dropdown"], [data-automation-id*="select"]'
+      );
 
     if (role === 'combobox' || role === 'listbox') return true;
     if (ariaHasPopup === 'listbox') return true;
-    if (parentRole === 'combobox') return true;
+    if (inComboboxContainer) return true;
     if (isTextLikeInput && (ariaAutocomplete === 'list' || ariaAutocomplete === 'both')) return true;
     if (isTextLikeInput && ariaControls && ariaExpanded !== null) return true;
+    if (isTextLikeInput && hasListboxTriggerNearby) return true;
     if (automationId.includes('select') || automationId.includes('dropdown')) return true;
     if (className.includes('combobox') || className.includes('dropdown')) return true;
 
     return false;
+  }
+
+  private isFieldRequired(element: HTMLElement): boolean {
+    if (element.hasAttribute('required') || element.getAttribute('aria-required') === 'true') {
+      return true;
+    }
+
+    if (
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLSelectElement
+    ) {
+      if (element.required) return true;
+    }
+
+    const hasRequiredToken = (value?: string | null): boolean =>
+      !!value && /\brequired\b/i.test(value);
+    const hasAsterisk = (value?: string | null): boolean => !!value && value.includes('*');
+
+    const describedBy = element.getAttribute('aria-describedby');
+    if (describedBy) {
+      const hasRequiredFromDescribedBy = describedBy.split(/\s+/).some((id) => {
+        const described = document.getElementById(id);
+        const text = described?.textContent || '';
+        const attrs = `${described?.getAttribute('data-automation-id') || ''} ${described?.getAttribute('aria-label') || ''}`;
+        return hasRequiredToken(text) || hasAsterisk(text) || hasRequiredToken(attrs);
+      });
+      if (hasRequiredFromDescribedBy) return true;
+    }
+
+    if (element.id) {
+      const label = document.querySelector(`label[for="${element.id}"]`);
+      if (label && (hasAsterisk(label.textContent) || hasRequiredToken(label.textContent))) {
+        return true;
+      }
+    }
+
+    const fieldset = element.closest('fieldset');
+    const legendText = fieldset?.querySelector('legend')?.textContent || '';
+    if (hasAsterisk(legendText) || hasRequiredToken(legendText)) return true;
+
+    const questionContainer =
+      element.closest('[data-automation-id*="question"]') ||
+      element.closest('[data-automation-id*="formField"]') ||
+      element.closest('[role="group"]');
+
+    if (questionContainer instanceof HTMLElement) {
+      const prompt = questionContainer.querySelector(
+        'label, legend, [data-automation-id*="label"], [data-automation-id*="prompt"], [aria-label]'
+      ) as HTMLElement | null;
+      const promptText = prompt?.textContent || '';
+      const promptAttrs = `${prompt?.getAttribute('data-automation-id') || ''} ${prompt?.getAttribute('aria-label') || ''}`;
+      if (hasAsterisk(promptText) || hasRequiredToken(promptText) || hasRequiredToken(promptAttrs)) {
+        return true;
+      }
+
+      const requiredMarker = questionContainer.querySelector(
+        '[data-automation-id*="required"], [aria-label*="required"], [title*="required"]'
+      );
+      if (requiredMarker) return true;
+    }
+
+    if (element instanceof HTMLInputElement && element.type === 'radio' && element.name) {
+      const radios = document.querySelectorAll(
+        `input[type="radio"][name="${element.name}"]`
+      ) as NodeListOf<HTMLInputElement>;
+      const groupRequired = Array.from(radios).some(
+        (radio) =>
+          radio.required ||
+          radio.getAttribute('aria-required') === 'true' ||
+          this.isFieldRequiredByContainer(radio)
+      );
+      if (groupRequired) return true;
+    }
+
+    return false;
+  }
+
+  private isFieldRequiredByContainer(element: HTMLElement): boolean {
+    const container =
+      element.closest('[data-automation-id*="question"]') ||
+      element.closest('[data-automation-id*="formField"]') ||
+      element.closest('[role="group"]');
+    if (!(container instanceof HTMLElement)) return false;
+    const text = container.textContent || '';
+    const attrs = `${container.getAttribute('data-automation-id') || ''} ${container.getAttribute('aria-label') || ''}`;
+    return /\brequired\b/i.test(text) || text.includes('*') || /\brequired\b/i.test(attrs);
   }
 
   private extractFieldValue(
