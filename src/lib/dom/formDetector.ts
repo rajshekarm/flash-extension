@@ -308,7 +308,56 @@ export class FormDetector {
       }
     });
 
-    return fields;
+    return this.dedupeFields(fields);
+  }
+
+  /**
+   * Deduplicate logical fields rendered as multiple DOM controls
+   * (common with custom dropdown widgets that expose both combobox + input)
+   */
+  private dedupeFields(fields: DetectedFormField[]): DetectedFormField[] {
+    const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
+    const isGenericLabel = (label: string) => {
+      const normalized = normalize(label);
+      return (
+        !normalized ||
+        normalized === 'unnamed field' ||
+        normalized === 'select one' ||
+        normalized === 'select one required' ||
+        normalized === 'required'
+      );
+    };
+
+    const scoreField = (field: DetectedFormField): number => {
+      let score = 0;
+      if (field.type === 'select') score += 5;
+      if (field.options && field.options.length > 0) score += 4;
+      if (field.required) score += 2;
+      if (!isGenericLabel(field.label)) score += 2;
+      if (field.name) score += 1;
+      if (field.type === 'text') score -= 1;
+      return score;
+    };
+
+    const bestByKey = new Map<string, DetectedFormField>();
+
+    for (const field of fields) {
+      const keyLabel = !isGenericLabel(field.label) ? normalize(field.label) : '';
+      const keyName = normalize(field.name || '');
+      const dedupeKey = keyLabel || keyName || normalize(field.id);
+
+      const existing = bestByKey.get(dedupeKey);
+      if (!existing) {
+        bestByKey.set(dedupeKey, field);
+        continue;
+      }
+
+      if (scoreField(field) > scoreField(existing)) {
+        bestByKey.set(dedupeKey, field);
+      }
+    }
+
+    return Array.from(bestByKey.values());
   }
 
   /**
@@ -408,13 +457,23 @@ export class FormDetector {
   }
 
   private isCustomSelectElement(element: HTMLElement): boolean {
+    const isTextLikeInput =
+      element instanceof HTMLInputElement &&
+      (element.type === 'text' || element.type === 'search' || element.type === '');
     const role = element.getAttribute('role')?.toLowerCase();
     const ariaHasPopup = element.getAttribute('aria-haspopup')?.toLowerCase();
+    const ariaAutocomplete = element.getAttribute('aria-autocomplete')?.toLowerCase();
+    const ariaExpanded = element.getAttribute('aria-expanded');
+    const ariaControls = element.getAttribute('aria-controls');
     const automationId = element.getAttribute('data-automation-id')?.toLowerCase() || '';
     const className = element.className?.toString().toLowerCase() || '';
+    const parentRole = element.closest('[role]')?.getAttribute('role')?.toLowerCase() || '';
 
     if (role === 'combobox' || role === 'listbox') return true;
     if (ariaHasPopup === 'listbox') return true;
+    if (parentRole === 'combobox') return true;
+    if (isTextLikeInput && (ariaAutocomplete === 'list' || ariaAutocomplete === 'both')) return true;
+    if (isTextLikeInput && ariaControls && ariaExpanded !== null) return true;
     if (automationId.includes('select') || automationId.includes('dropdown')) return true;
     if (className.includes('combobox') || className.includes('dropdown')) return true;
 
