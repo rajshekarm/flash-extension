@@ -162,6 +162,15 @@ export interface FormField {
   validation_rules?: Record<string, any> | null;
 }
 
+export interface ApplicationQuestion {
+  question_id: string;
+  prompt: string;
+  required: boolean;
+  question_type: 'single_choice' | 'multi_choice' | 'free_text' | 'date' | 'file' | 'boolean';
+  options?: string[];
+  field_ids: string[];
+}
+
 export interface ConfidenceScore {
   score: number;
   level: 'high' | 'medium' | 'low';
@@ -206,6 +215,7 @@ export interface AnswerQuestionResponse {
 
 export interface FillApplicationRequest {
   form_fields: FormField[];
+  questions?: ApplicationQuestion[];
   user_id: string;
   job_id?: string;
 }

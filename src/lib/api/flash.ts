@@ -7,6 +7,7 @@ import type {
   QuestionContext,
   Answer,
   FormField,
+  ApplicationQuestion,
   UserProfile,
   ApplicationData,
   LoginRequest,
@@ -102,6 +103,7 @@ export class FlashAPI {
     formFields: FormField[],
     userId: string,
     jobId?: string,
+    formQuestions?: ApplicationQuestion[],
     userProfile?: Partial<UserProfile>
   ): Promise<{ answers: Answer[]; overall_confidence: number }> {
     console.log("request to fill the application")
@@ -115,11 +117,28 @@ export class FlashAPI {
       options: field.options ?? [],
     }));
 
-    return await this.postWithOptionalProfile('/api/flash/fill-application-form', {
+    const payload: Record<string, unknown> = {
       form_fields: legacyFormFields,
       user_id: userId,
       job_id: jobId,
-    }, userProfile);
+    };
+
+    if (formQuestions && formQuestions.length > 0) {
+      payload.questions = formQuestions;
+    }
+
+    try {
+      return await this.postWithOptionalProfile('/api/flash/fill-application-form', payload, userProfile);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      if (payload.questions && (status === 400 || status === 422)) {
+        console.warn('[FlashAPI] fill-application-form rejected questions payload, retrying without questions', { status });
+        const fallbackPayload = { ...payload };
+        delete fallbackPayload.questions;
+        return await this.postWithOptionalProfile('/api/flash/fill-application-form', fallbackPayload, userProfile);
+      }
+      throw error;
+    }
   }
 
   /**
